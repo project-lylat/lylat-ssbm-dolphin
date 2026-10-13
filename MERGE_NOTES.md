@@ -66,11 +66,36 @@ Slippi login on mainline lives in the Rust extensions
 ## Build status (2026-10-13)
 
 Release x64, Ninja, `-DSLIPPI_PLAYBACK=false`, `cmake --build <tmp>/build --target dolphin-emu -j 2 -- -k 0`
-(script: `..\tmp-lylat-ssbm-dolphin\build.bat`).
+(script: `..	mp-lylat-ssbm-dolphinuild.bat`, run under heavy.lock).
 
-- Run 1: stopped on the C7595 error above.
-- Run 2: no compile errors; `core` compiled, including `SlippiQrLogin.cpp` and the
-  CachedInterpreter fix. It stopped at step 362/588 with `LNK1180: insufficient disk
-  space` linking `videocommon.lib`: drive C: had 72 MB free. The Qt files
-  (`SlippiQrLoginDialog.cpp`, `MainWindow.cpp`, `SlippiPane.cpp`) have NOT been
-  compiled yet, and the binary has not been linked or run.
+- Run 1: stopped on the C7595 error above (exit 2).
+- Run 2: no compile errors, then `LNK1180` (disk full) at step 362/588 (exit 2).
+- Run 3 (after disk space was freed): exit 0, `Binary/x64/Slippi_Dolphin.exe` built
+  (the version string reads 4.0.0-mainline-beta.19). No further code fixes were needed.
+
+## QR sign-in check (2026-10-13, local mock only)
+
+Mock: `..	mp-lylat-ssbm-dolphin\mock\mock_server.py --port 3471 --pending 8 --interval 2`
+(code `MOCK-7Q4X`, pick 42, QR for `http://mock.invalid/device?code=MOCK-7Q4X`).
+Dolphin was started with `-u <tmp user dir>`, `[Slippi] QrLoginServer = http://127.0.0.1:3471`
+and the test aid `DOLPHIN_SLIPPI_QR_LOGIN_TEST=1`, which opens the window at startup.
+Shots are in `..	mp-lylat-ssbm-dolphin\shots\`.
+
+| Check | Result |
+| --- | --- |
+| Code request | the mock logged one `/api/device/code` with client `slippi-dolphin`, platform `windows` |
+| Showing (`qr-showing.png`) | QR, `MOCK-7Q4X`, "Pick 42 on your phone", address, "Expires in 9:57" |
+| Polling | `/api/device/token` every 2 s; pending for 8 s, then 200 |
+| Approved (`approved.png`) | "Approved! Signing you in..." |
+| Logged in (`logged-in.png`) | "Logged in"; `Slippi/user.json` in the user dir is byte-for-byte the mock's account |
+| Denied (`error-denied.png`) | "Sign-in denied" with Retry; no user.json written |
+
+Not verified:
+- The in-game path (`handleLogInRequest` from Melee's Login, with the EXI device
+  running). No game was booted. Without a device, Manual login is hidden, and the
+  Approved state waits the full 10 s for the Rust watcher before showing Logged in.
+- That the Rust watcher loads the written user.json in a running game.
+- The 404 fallback to the browser, Retry, slow_down, expired and the server-error states.
+- A decode of the shown QR (OpenCV is not installed here; the QR is drawn from
+  `verification_uri_complete` with qrcodegen).
+- A real Lylat server and a phone scan.
