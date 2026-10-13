@@ -3,6 +3,9 @@
 
 #include "DolphinQt/MainWindow.h"
 
+#include "Core/Slippi/SlippiQrLogin.h"
+#include "DolphinQt/SlippiQrLoginDialog.h"
+
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDateTime>
@@ -15,6 +18,7 @@
 #include <QMimeData>
 #include <QStackedWidget>
 #include <QStyleHints>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWindow>
 
@@ -251,6 +255,26 @@ MainWindow::MainWindow(Core::System& system, std::unique_ptr<BootParameters> boo
   InitControllers();
   ConnectHotkeys();
 
+  // QR sign-in: the EXI device asks for it from the CPU thread when the game
+  // logs in and a QR sign-in server is set. Show (or restart) the window here.
+  SlippiQrLogin::SetHandler([this](const std::string& origin, const std::string& account_path) {
+    QMetaObject::invokeMethod(
+        this,
+        [this, origin, account_path] { SlippiQrLoginDialog::ShowFor(this, origin, account_path); },
+        Qt::QueuedConnection);
+  });
+  // Test aid: open the QR sign-in window at startup (for screenshots without a game).
+  if (qEnvironmentVariableIsSet("DOLPHIN_SLIPPI_QR_LOGIN_TEST"))
+  {
+    std::string origin, account_path;
+    if (SlippiQrLogin::GetTarget(&origin, &account_path))
+    {
+      QTimer::singleShot(500, this, [this, origin, account_path] {
+        SlippiQrLoginDialog::ShowFor(this, origin, account_path);
+      });
+    }
+  }
+
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
   connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this,
           [this](Qt::ColorScheme colorScheme) {
@@ -348,6 +372,8 @@ MainWindow::MainWindow(Core::System& system, std::unique_ptr<BootParameters> boo
 
 MainWindow::~MainWindow()
 {
+  SlippiQrLogin::SetHandler(nullptr);
+
   // Shut down NetPlay first to avoid race condition segfault
   Settings::Instance().ResetNetPlayClient();
   Settings::Instance().ResetNetPlayServer();

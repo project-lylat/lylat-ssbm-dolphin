@@ -351,6 +351,8 @@ add_executable(dolphin-emu
   RiivolutionBootWidget.h
   SearchBar.cpp
   SearchBar.h
+  SlippiQrLoginDialog.cpp
+  SlippiQrLoginDialog.h
   Settings.cpp
   Settings.h
   Settings/AdvancedPane.cpp
@@ -439,6 +441,7 @@ PRIVATE
 target_link_libraries(dolphin-emu
 PRIVATE
   core
+  qrcodegen
   Qt6::Widgets
   uicommon
   imgui

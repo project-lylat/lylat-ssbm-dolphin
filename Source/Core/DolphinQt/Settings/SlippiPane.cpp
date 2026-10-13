@@ -9,9 +9,11 @@
 #include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
+#include "Core/Slippi/SlippiQrLogin.h"
 #include "Core/System.h"
 
 #include "DolphinQt/QtUtils/NonDefaultQPushButton.h"
+#include "DolphinQt/SlippiQrLoginDialog.h"
 
 #ifndef IS_PLAYBACK
 #include "Core/HW/EXI/EXI.h"
@@ -100,6 +102,34 @@ void SlippiPane::CreateLayout()
   netplay_port_layout->addWidget(m_netplay_port, 0, 1, Qt::AlignLeft);
 
   online_settings_layout->addRow(netplay_port_layout);
+
+  auto* qr_login_server = new QLineEdit();
+  qr_login_server->setPlaceholderText(tr("Off (browser login)"));
+  qr_login_server->setToolTip(
+      tr("Sign in by scanning a QR code with your phone. Enter the address of a server that "
+         "supports QR sign-in, or leave this empty to log in through the browser."));
+  qr_login_server->setText(QString::fromStdString(Config::Get(Config::SLIPPI_QR_LOGIN_SERVER)));
+  connect(qr_login_server, &QLineEdit::editingFinished, [qr_login_server] {
+    Config::SetBase(Config::SLIPPI_QR_LOGIN_SERVER,
+                    qr_login_server->text().trimmed().toStdString());
+  });
+  auto* qr_login_button = new NonDefaultQPushButton(tr("Sign In..."));
+  qr_login_button->setToolTip(tr("Show the QR code now, without starting the game."));
+  qr_login_button->setEnabled(!qr_login_server->text().trimmed().isEmpty());
+  connect(qr_login_server, &QLineEdit::textChanged, [qr_login_button](const QString& text) {
+    qr_login_button->setEnabled(!text.trimmed().isEmpty());
+  });
+  connect(qr_login_button, &QPushButton::clicked, [this, qr_login_server] {
+    Config::SetBase(Config::SLIPPI_QR_LOGIN_SERVER,
+                    qr_login_server->text().trimmed().toStdString());
+    std::string origin, account_path;
+    if (SlippiQrLogin::GetTarget(&origin, &account_path))
+      SlippiQrLoginDialog::ShowFor(window(), origin, account_path);
+  });
+  auto* qr_login_layout = new QHBoxLayout();
+  qr_login_layout->addWidget(qr_login_server, 1);
+  qr_login_layout->addWidget(qr_login_button);
+  online_settings_layout->addRow(tr("QR Sign-in Server:"), qr_login_layout);
 
   // // i'd like to note that I hate everything about how this is organized for the next two
   // sections
