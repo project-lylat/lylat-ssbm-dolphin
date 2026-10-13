@@ -64,6 +64,8 @@ extern const Info<bool> SLIPPI_FORCE_NETPLAY_PORT;
 extern const Info<int> SLIPPI_NETPLAY_PORT;
 extern const Info<bool> SLIPPI_FORCE_LAN_IP;
 extern const Info<std::string> SLIPPI_LAN_IP;
+// The QR sign-in server (a URL; its origin is used). Empty: browser login only.
+extern const Info<std::string> SLIPPI_QR_LOGIN_SERVER;
 extern const Info<bool> SLIPPI_REPLAY_MONTHLY_FOLDERS;
 extern const Info<std::string> SLIPPI_REPLAY_DIR;
 extern const Info<bool> SLIPPI_ENABLE_FRAME_INDEX;

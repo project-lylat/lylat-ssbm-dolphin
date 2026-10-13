@@ -24,6 +24,7 @@
 #include "Core/Debugger/Debugger_SymbolMap.h"
 #include "Core/GeckoCode.h"
 #include "Core/HW/EXI/EXI_DeviceSlippi.h"
+#include "Core/Slippi/SlippiQrLogin.h"
 #include "Core/HW/Memmap.h"
 #include "Core/HW/SystemTimers.h"
 #include "Core/Host.h"
@@ -151,6 +152,7 @@ CEXISlippi::CEXISlippi(Core::System& system, const std::string current_file_name
   slprs_exi_device_ptr = slprs_exi_device_create(slprs_exi_config);
 
   user = std::make_unique<SlippiUser>(slprs_exi_device_ptr);
+  SlippiQrLogin::RegisterUser(user.get());
   g_playback_status = std::make_unique<SlippiPlaybackStatus>();
   matchmaking = std::make_unique<SlippiMatchmaking>(slprs_exi_device_ptr, user.get());
   game_file_loader = std::make_unique<SlippiGameFileLoader>();
@@ -217,6 +219,9 @@ CEXISlippi::~CEXISlippi()
   local_selections.Reset();
 
   g_playback_status->resetPlayback();
+
+  // The QR sign-in window must not reach the user once the device is gone.
+  SlippiQrLogin::UnregisterUser(user.get());
 
   // Instruct the Rust EXI device to shut down/drop everything.
   slprs_exi_device_destroy(slprs_exi_device_ptr);
@@ -2955,7 +2960,10 @@ void CEXISlippi::handleLogInRequest()
   if (!log_in_res)
   {
     // no easy way to raise and lower the window
-    user->OpenLogInPage();
+    // A configured QR sign-in server shows a QR code instead of the browser page;
+    // it writes user.json, which the watcher below picks up.
+    if (!SlippiQrLogin::Start())
+      user->OpenLogInPage();
     user->ListenForLogIn();
   }
 }

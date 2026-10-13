@@ -46,6 +46,7 @@ const Info<bool> SLIPPI_FORCE_NETPLAY_PORT{{System::Main, "Slippi", "ForceNetpla
 const Info<int> SLIPPI_NETPLAY_PORT{{System::Main, "Slippi", "NetplayPort"}, 2626};
 const Info<bool> SLIPPI_FORCE_LAN_IP{{System::Main, "Slippi", "ForceLanIP"}, false};
 const Info<std::string> SLIPPI_LAN_IP{{System::Main, "Slippi", "LanIP"}, ""};
+const Info<std::string> SLIPPI_QR_LOGIN_SERVER{{System::Main, "Slippi", "QrLoginServer"}, ""};
 const Info<bool> SLIPPI_REPLAY_MONTHLY_FOLDERS{{System::Main, "Slippi", "ReplayMonthlyFolders"},
                                                true};
 const Info<std::string> SLIPPI_REPLAY_DIR{{System::Main, "Slippi", "ReplayDir"},

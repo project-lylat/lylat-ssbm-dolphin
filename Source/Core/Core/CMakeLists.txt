@@ -580,6 +580,8 @@ add_library(core
   Slippi/SlippiGame.h
   Slippi/SlippiDirectCodes.cpp
   Slippi/SlippiPremadeText.h
+  Slippi/SlippiQrLogin.cpp
+  Slippi/SlippiQrLogin.h
   State.cpp
   State.h
   SyncIdentifier.h
