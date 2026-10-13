@@ -380,16 +380,20 @@ bool CachedInterpreter::DoJit(u32 em_address, JitBlock* b, u32 nextPC)
             {interpreter, Interpreter::GetInterpreterOp(op.inst), js.compilerPC, op.inst},
             power_pc,
             js.downcountAmount};
-        Write(op.canEndBlock ? CallbackCast(InterpretAndCheckExceptions<true>) :
-                               CallbackCast(InterpretAndCheckExceptions<false>),
-              operands);
+        // if/else, not ?:, so MSVC 19.36 accepts the consteval calls (C7595).
+        if (op.canEndBlock)
+          Write(CallbackCast(InterpretAndCheckExceptions<true>), operands);
+        else
+          Write(CallbackCast(InterpretAndCheckExceptions<false>), operands);
       }
       else
       {
         const InterpretOperands operands = {interpreter, Interpreter::GetInterpreterOp(op.inst),
                                             js.compilerPC, op.inst};
-        Write(op.canEndBlock ? CallbackCast(Interpret<true>) : CallbackCast(Interpret<false>),
-              operands);
+        if (op.canEndBlock)
+          Write(CallbackCast(Interpret<true>), operands);
+        else
+          Write(CallbackCast(Interpret<false>), operands);
       }
 
       if (op.branchIsIdleLoop)
