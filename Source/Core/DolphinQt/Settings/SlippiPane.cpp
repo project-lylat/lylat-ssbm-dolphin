@@ -4,6 +4,8 @@
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGridLayout>
+#include <QHBoxLayout>
+#include <QLineEdit>
 #include <QSizePolicy>
 
 #include "Core/Config/MainSettings.h"

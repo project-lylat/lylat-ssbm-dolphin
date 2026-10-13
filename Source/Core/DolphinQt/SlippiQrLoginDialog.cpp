@@ -295,7 +295,11 @@ void SlippiQrLoginDialog::StopAttempt()
 {
   if (m_attempt)
   {
-    m_attempt->cancel = true;
+    {
+      // Under the lock, so the worker cannot miss the wakeup between its check and its wait.
+      std::lock_guard lock(m_attempt->m);
+      m_attempt->cancel = true;
+    }
     m_attempt->cv.notify_all();
   }
   // The progress callback aborts an in-flight request, so this is quick.
@@ -372,6 +376,8 @@ void SlippiQrLoginDialog::Run(std::shared_ptr<Attempt> attempt)
   };
   const auto post = [&attempt](const std::string& url, const std::string& json) {
     Reply reply;
+    // No redirects: HttpRequest follows them only after FollowRedirects(), which is
+    // not called here (libcurl's default is off). The token body holds the secret.
     Common::HttpRequest request(std::chrono::seconds(8),
                                 [&attempt](s64, s64, s64, s64) { return !attempt->cancel.load(); });
     const auto response = request.Post(

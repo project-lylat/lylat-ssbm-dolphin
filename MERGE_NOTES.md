@@ -54,6 +54,11 @@ Slippi login on mainline lives in the Rust extensions
   the default.
 - 404 from `/api/device/code`: the window closes and the browser login opens
   (from Settings, with no game running, it shows an error instead).
+- Redirects: the device-code client does not follow them. `Common::HttpRequest`
+  sets `CURLOPT_FOLLOWLOCATION` only in `FollowRedirects()`, which the dialog never
+  calls, and libcurl's default is off.
+- Cancel: `StopAttempt()` sets the cancel flag under the attempt's mutex before
+  notifying, so the polling thread cannot miss the wakeup.
 - `Externals/qrcodegen`: Nayuki's QR Code generator (C, MIT, v1.8.0), copied from
   doldecomp `native/source/vendor/qrcodegen`, with its LICENSE; listed in
   `Externals/licenses.md`.
