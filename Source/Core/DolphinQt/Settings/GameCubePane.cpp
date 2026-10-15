@@ -39,17 +39,13 @@
 #include "DolphinQt/QtUtils/DolphinFileDialog.h"
 #include "DolphinQt/QtUtils/ModalMessageBox.h"
 #include "DolphinQt/QtUtils/NonDefaultQPushButton.h"
+#include "DolphinQt/QtUtils/SetWindowDecorations.h"
 #include "DolphinQt/QtUtils/SignalBlocking.h"
 #include "DolphinQt/Settings.h"
 #include "DolphinQt/Settings/BroadbandAdapterSettingsDialog.h"
 
-enum
-{
-  SLOT_A_INDEX,
-  SLOT_B_INDEX,
-  SLOT_SP1_INDEX,
-  SLOT_COUNT
-};
+constexpr std::initializer_list<ExpansionInterface::Slot> GUI_SLOTS = {
+    ExpansionInterface::Slot::A, ExpansionInterface::Slot::B, ExpansionInterface::Slot::SP1};
 
 GameCubePane::GameCubePane()
 {
@@ -94,7 +90,7 @@ void GameCubePane::CreateWidgets()
   QGridLayout* device_layout = new QGridLayout(device_box);
   device_box->setLayout(device_layout);
 
-  for (ExpansionInterface::Slot slot : ExpansionInterface::SLOTS)
+  for (ExpansionInterface::Slot slot : GUI_SLOTS)
   {
     m_slot_combos[slot] = new QComboBox(device_box);
     m_slot_combos[slot]->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
@@ -150,10 +146,9 @@ void GameCubePane::CreateWidgets()
            EXIDeviceType::Dummy,
            EXIDeviceType::Ethernet,
            EXIDeviceType::EthernetXLink,
-#ifdef __APPLE__
            EXIDeviceType::EthernetTapServer,
-#endif
            EXIDeviceType::EthernetBuiltIn,
+           EXIDeviceType::ModemTapServer,
        })
   {
     m_slot_combos[ExpansionInterface::Slot::SP1]->addItem(tr(fmt::format("{:n}", device).c_str()),
@@ -250,15 +245,14 @@ void GameCubePane::ConnectWidgets()
 {
   // IPL Settings
   connect(m_skip_main_menu, &QCheckBox::stateChanged, this, &GameCubePane::SaveSettings);
-  connect(m_language_combo, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          &GameCubePane::SaveSettings);
+  connect(m_language_combo, &QComboBox::currentIndexChanged, this, &GameCubePane::SaveSettings);
 
   // Device Settings
-  for (ExpansionInterface::Slot slot : ExpansionInterface::SLOTS)
+  for (ExpansionInterface::Slot slot : GUI_SLOTS)
   {
-    connect(m_slot_combos[slot], qOverload<int>(&QComboBox::currentIndexChanged), this,
+    connect(m_slot_combos[slot], &QComboBox::currentIndexChanged, this,
             [this, slot] { UpdateButton(slot); });
-    connect(m_slot_combos[slot], qOverload<int>(&QComboBox::currentIndexChanged), this,
+    connect(m_slot_combos[slot], &QComboBox::currentIndexChanged, this,
             &GameCubePane::SaveSettings);
     connect(m_slot_buttons[slot], &QPushButton::clicked, [this, slot] { OnConfigPressed(slot); });
   }
@@ -357,7 +351,12 @@ void GameCubePane::UpdateButton(ExpansionInterface::Slot slot)
   case ExpansionInterface::Slot::SP1:
     has_config = (device == ExpansionInterface::EXIDeviceType::Ethernet ||
                   device == ExpansionInterface::EXIDeviceType::EthernetXLink ||
-                  device == ExpansionInterface::EXIDeviceType::EthernetBuiltIn);
+                  device == ExpansionInterface::EXIDeviceType::EthernetTapServer ||
+                  device == ExpansionInterface::EXIDeviceType::EthernetBuiltIn ||
+                  device == ExpansionInterface::EXIDeviceType::ModemTapServer);
+    break;
+  case ExpansionInterface::Slot::SP2:
+    has_config = false;
     break;
   }
 
@@ -381,22 +380,47 @@ void GameCubePane::OnConfigPressed(ExpansionInterface::Slot slot)
     BrowseAGPRom(slot);
     return;
   case ExpansionInterface::EXIDeviceType::Microphone:
+  {
     // TODO: convert MappingWindow to use Slot?
-    MappingWindow(this, MappingWindow::Type::MAPPING_GC_MICROPHONE, static_cast<int>(slot)).exec();
+    MappingWindow dialog(this, MappingWindow::Type::MAPPING_GC_MICROPHONE, static_cast<int>(slot));
+    SetQWidgetWindowDecorations(&dialog);
+    dialog.exec();
     return;
+  }
   case ExpansionInterface::EXIDeviceType::Ethernet:
   {
-    BroadbandAdapterSettingsDialog(this, BroadbandAdapterSettingsDialog::Type::Ethernet).exec();
+    BroadbandAdapterSettingsDialog dialog(this, BroadbandAdapterSettingsDialog::Type::Ethernet);
+    SetQWidgetWindowDecorations(&dialog);
+    dialog.exec();
     return;
   }
   case ExpansionInterface::EXIDeviceType::EthernetXLink:
   {
-    BroadbandAdapterSettingsDialog(this, BroadbandAdapterSettingsDialog::Type::XLinkKai).exec();
+    BroadbandAdapterSettingsDialog dialog(this, BroadbandAdapterSettingsDialog::Type::XLinkKai);
+    SetQWidgetWindowDecorations(&dialog);
+    dialog.exec();
+    return;
+  }
+  case ExpansionInterface::EXIDeviceType::EthernetTapServer:
+  {
+    BroadbandAdapterSettingsDialog dialog(this, BroadbandAdapterSettingsDialog::Type::TapServer);
+    SetQWidgetWindowDecorations(&dialog);
+    dialog.exec();
+    return;
+  }
+  case ExpansionInterface::EXIDeviceType::ModemTapServer:
+  {
+    BroadbandAdapterSettingsDialog dialog(this,
+                                          BroadbandAdapterSettingsDialog::Type::ModemTapServer);
+    SetQWidgetWindowDecorations(&dialog);
+    dialog.exec();
     return;
   }
   case ExpansionInterface::EXIDeviceType::EthernetBuiltIn:
   {
-    BroadbandAdapterSettingsDialog(this, BroadbandAdapterSettingsDialog::Type::BuiltIn).exec();
+    BroadbandAdapterSettingsDialog dialog(this, BroadbandAdapterSettingsDialog::Type::BuiltIn);
+    SetQWidgetWindowDecorations(&dialog);
+    dialog.exec();
     return;
   }
   default:
@@ -410,9 +434,9 @@ void GameCubePane::BrowseMemcard(ExpansionInterface::Slot slot)
   ASSERT(ExpansionInterface::IsMemcardSlot(slot));
 
   const QString filename = DolphinFileDialog::getSaveFileName(
-      this, tr("Choose a file to open or create"),
+      this, tr("Choose a File to Open or Create"),
       QString::fromStdString(File::GetUserPath(D_GCUSER_IDX)),
-      tr("GameCube Memory Cards (*.raw *.gcp)"), 0, QFileDialog::DontConfirmOverwrite);
+      tr("GameCube Memory Cards (*.raw *.gcp)"), nullptr, QFileDialog::DontConfirmOverwrite);
 
   if (!filename.isEmpty())
     SetMemcard(slot, filename);
@@ -490,7 +514,8 @@ bool GameCubePane::SetMemcard(ExpansionInterface::Slot slot, const QString& file
   const std::string old_eu_path = Config::GetMemcardPath(slot, DiscIO::Region::PAL);
   Config::SetBase(Config::GetInfoForMemcardPath(slot), raw_path);
 
-  if (Core::IsRunning())
+  auto& system = Core::System::GetInstance();
+  if (Core::IsRunning(system))
   {
     // If emulation is running and the new card is different from the old one, notify the system to
     // eject the old and insert the new card.
@@ -499,8 +524,8 @@ bool GameCubePane::SetMemcard(ExpansionInterface::Slot slot, const QString& file
     {
       // ChangeDevice unplugs the device for 1 second, which means that games should notice that
       // the path has changed and thus the memory card contents have changed
-      Core::System::GetInstance().GetExpansionInterface().ChangeDevice(
-          slot, ExpansionInterface::EXIDeviceType::MemoryCard);
+      system.GetExpansionInterface().ChangeDevice(slot,
+                                                  ExpansionInterface::EXIDeviceType::MemoryCard);
     }
   }
 
@@ -513,8 +538,7 @@ void GameCubePane::BrowseGCIFolder(ExpansionInterface::Slot slot)
   ASSERT(ExpansionInterface::IsMemcardSlot(slot));
 
   const QString path = DolphinFileDialog::getExistingDirectory(
-      this, tr("Choose the GCI base folder"),
-      QString::fromStdString(File::GetUserPath(D_GCUSER_IDX)));
+      this, tr("Choose GCI Base Folder"), QString::fromStdString(File::GetUserPath(D_GCUSER_IDX)));
 
   if (!path.isEmpty())
     SetGCIFolder(slot, path);
@@ -596,7 +620,8 @@ bool GameCubePane::SetGCIFolder(ExpansionInterface::Slot slot, const QString& pa
 
   Config::SetBase(Config::GetInfoForGCIPath(slot), raw_path);
 
-  if (Core::IsRunning())
+  auto& system = Core::System::GetInstance();
+  if (Core::IsRunning(system))
   {
     // If emulation is running and the new card is different from the old one, notify the system to
     // eject the old and insert the new card.
@@ -605,7 +630,7 @@ bool GameCubePane::SetGCIFolder(ExpansionInterface::Slot slot, const QString& pa
     {
       // ChangeDevice unplugs the device for 1 second, which means that games should notice that
       // the path has changed and thus the memory card contents have changed
-      Core::System::GetInstance().GetExpansionInterface().ChangeDevice(
+      system.GetExpansionInterface().ChangeDevice(
           slot, ExpansionInterface::EXIDeviceType::MemoryCardFolder);
     }
   }
@@ -619,8 +644,8 @@ void GameCubePane::BrowseAGPRom(ExpansionInterface::Slot slot)
   ASSERT(ExpansionInterface::IsMemcardSlot(slot));
 
   QString filename = DolphinFileDialog::getSaveFileName(
-      this, tr("Choose a file to open"), QString::fromStdString(File::GetUserPath(D_GCUSER_IDX)),
-      tr("Game Boy Advance Carts (*.gba)"), 0, QFileDialog::DontConfirmOverwrite);
+      this, tr("Choose a File to Open"), QString::fromStdString(File::GetUserPath(D_GCUSER_IDX)),
+      tr("Game Boy Advance Carts (*.gba)"), nullptr, QFileDialog::DontConfirmOverwrite);
 
   if (!filename.isEmpty())
     SetAGPRom(slot, filename);
@@ -636,14 +661,14 @@ void GameCubePane::SetAGPRom(ExpansionInterface::Slot slot, const QString& filen
 
   Config::SetBase(Config::GetInfoForAGPCartPath(slot), path_abs.toStdString());
 
-  if (Core::IsRunning() && path_abs != path_old)
+  auto& system = Core::System::GetInstance();
+  if (Core::IsRunning(system) && path_abs != path_old)
   {
     // ChangeDevice unplugs the device for 1 second.  For an actual AGP, you can remove the
     // cartridge without unplugging it, and it's not clear if the AGP software actually notices
     // that it's been unplugged or the cartridge has changed, but this was done for memcards so
     // we might as well do it for the AGP too.
-    Core::System::GetInstance().GetExpansionInterface().ChangeDevice(
-        slot, ExpansionInterface::EXIDeviceType::AGP);
+    system.GetExpansionInterface().ChangeDevice(slot, ExpansionInterface::EXIDeviceType::AGP);
   }
 
   LoadSettings();
@@ -714,7 +739,7 @@ void GameCubePane::LoadSettings()
   m_skip_main_menu->setToolTip(have_menu ? QString{} : tr("Put IPL ROMs in User/GC/<region>."));
 
   // Device Settings
-  for (ExpansionInterface::Slot slot : ExpansionInterface::SLOTS)
+  for (ExpansionInterface::Slot slot : GUI_SLOTS)
   {
     const ExpansionInterface::EXIDeviceType exi_device =
         Config::Get(Config::GetInfoForEXIDevice(slot));
@@ -757,17 +782,18 @@ void GameCubePane::SaveSettings()
   Config::SetBaseOrCurrent(Config::MAIN_SKIP_IPL, m_skip_main_menu->isChecked());
   Config::SetBaseOrCurrent(Config::MAIN_GC_LANGUAGE, m_language_combo->currentData().toInt());
 
+  auto& system = Core::System::GetInstance();
   // Device Settings
-  for (ExpansionInterface::Slot slot : ExpansionInterface::SLOTS)
+  for (ExpansionInterface::Slot slot : GUI_SLOTS)
   {
     const auto dev =
         static_cast<ExpansionInterface::EXIDeviceType>(m_slot_combos[slot]->currentData().toInt());
     const ExpansionInterface::EXIDeviceType current_exi_device =
         Config::Get(Config::GetInfoForEXIDevice(slot));
 
-    if (Core::IsRunning() && current_exi_device != dev)
+    if (Core::IsRunning(system) && current_exi_device != dev)
     {
-      Core::System::GetInstance().GetExpansionInterface().ChangeDevice(slot, dev);
+      system.GetExpansionInterface().ChangeDevice(slot, dev);
     }
 
     Config::SetBaseOrCurrent(Config::GetInfoForEXIDevice(slot), dev);

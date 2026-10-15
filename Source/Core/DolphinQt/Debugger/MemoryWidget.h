@@ -9,6 +9,7 @@
 #include <QDockWidget>
 
 #include "Common/CommonTypes.h"
+#include "VideoCommon/VideoEvents.h"
 
 class MemoryViewWidget;
 class QCheckBox;
@@ -22,20 +23,20 @@ class QSplitter;
 
 namespace Core
 {
+class System;
 class CPUThreadGuard;
-}
+}  // namespace Core
 
 class MemoryWidget : public QDockWidget
 {
   Q_OBJECT
 public:
-  explicit MemoryWidget(QWidget* parent = nullptr);
+  explicit MemoryWidget(Core::System& system, QWidget* parent = nullptr);
   ~MemoryWidget();
 
   void SetAddress(u32 address);
   void Update();
 signals:
-  void BreakpointsChanged();
   void ShowCode(u32 address);
   void RequestWatch(QString name, u32 address);
 
@@ -76,7 +77,14 @@ private:
   void FindValue(bool next);
 
   void closeEvent(QCloseEvent*) override;
+  void hideEvent(QHideEvent* event) override;
   void showEvent(QShowEvent* event) override;
+  void RegisterAfterFrameEventCallback();
+  void RemoveAfterFrameEventCallback();
+  void AutoUpdateTable();
+  void ActivateSearchAddress();
+
+  Core::System& m_system;
 
   MemoryViewWidget* m_memory_view;
   QSplitter* m_splitter;
@@ -107,4 +115,7 @@ private:
   QRadioButton* m_bp_read_only;
   QRadioButton* m_bp_write_only;
   QCheckBox* m_bp_log_check;
+  Common::EventHook m_vi_end_field_event;
+
+  bool m_auto_update_enabled = true;
 };

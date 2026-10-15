@@ -123,6 +123,9 @@ void PCAPSSLCaptureLogger::LogBBA(const void* data, std::size_t length)
 {
   if (!Config::Get(Config::MAIN_NETWORK_DUMP_BBA))
     return;
+
+  // Concurrency between CEXIETHERNET's RecvHandlePacket and SendFromDirectFIFO
+  const std::lock_guard lock(m_io_mutex);
   m_file->AddPacket(static_cast<const u8*>(data), length);
 }
 
@@ -155,8 +158,7 @@ void PCAPSSLCaptureLogger::Log(LogType log_type, const void* data, std::size_t l
     to = other ? reinterpret_cast<sockaddr_in*>(other) : &peer;
   }
 
-  LogIPv4(log_type, reinterpret_cast<const u8*>(data), static_cast<u16>(length), socket, *from,
-          *to);
+  LogIPv4(log_type, static_cast<const u8*>(data), static_cast<u16>(length), socket, *from, *to);
 }
 
 void PCAPSSLCaptureLogger::LogIPv4(LogType log_type, const u8* data, u16 length, s32 socket,

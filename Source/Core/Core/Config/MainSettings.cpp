@@ -10,6 +10,7 @@
 #include "AudioCommon/AudioCommon.h"
 #include "Common/Assert.h"
 #include "Common/CommonPaths.h"
+#include "Common/CommonTypes.h"
 #include "Common/Config/Config.h"
 #include "Common/EnumMap.h"
 #include "Common/FileUtil.h"
@@ -17,6 +18,7 @@
 #include "Common/MathUtil.h"
 #include "Common/StringUtil.h"
 #include "Common/Version.h"
+#include "Core/AchievementManager.h"
 #include "Core/Config/DefaultLocale.h"
 #include "Core/HW/EXI/EXI.h"
 #include "Core/HW/EXI/EXI_Device.h"
@@ -44,6 +46,7 @@ const Info<bool> SLIPPI_FORCE_NETPLAY_PORT{{System::Main, "Slippi", "ForceNetpla
 const Info<int> SLIPPI_NETPLAY_PORT{{System::Main, "Slippi", "NetplayPort"}, 2626};
 const Info<bool> SLIPPI_FORCE_LAN_IP{{System::Main, "Slippi", "ForceLanIP"}, false};
 const Info<std::string> SLIPPI_LAN_IP{{System::Main, "Slippi", "LanIP"}, ""};
+const Info<std::string> SLIPPI_QR_LOGIN_SERVER{{System::Main, "Slippi", "QrLoginServer"}, ""};
 const Info<bool> SLIPPI_REPLAY_MONTHLY_FOLDERS{{System::Main, "Slippi", "ReplayMonthlyFolders"},
                                                true};
 const Info<std::string> SLIPPI_REPLAY_DIR{{System::Main, "Slippi", "ReplayDir"},
@@ -52,6 +55,9 @@ const Info<bool> SLIPPI_ENABLE_FRAME_INDEX{{System::Main, "Slippi", "EnableFrame
 const Info<bool> SLIPPI_BLOCKING_PIPES{{System::Main, "Slippi", "BlockingPipes"}, false};
 const Info<bool> SLIPPI_ENABLE_JUKEBOX{{System::Main, "Slippi", "EnableJukebox"}, true};
 const Info<int> SLIPPI_JUKEBOX_VOLUME{{System::Main, "Slippi", "JukeboxVolume"}, 100};
+
+const Info<bool> SLIPPI_ENABLE_RANK_LOCAL{{System::Main, "Slippi", "ShowLocalRankInfo"}, true};
+const Info<bool> SLIPPI_ENABLE_RANK_OPP{{System::Main, "Slippi", "ShowOpponentRankInfo"}, true};
 
 // Playback Settings
 const Info<bool> SLIPPI_ENABLE_SEEK{{System::Main, "Slippi", "EnableSeek"}, true};
@@ -63,10 +69,12 @@ const Info<PowerPC::CPUCore> MAIN_CPU_CORE{{System::Main, "Core", "CPUCore"},
                                            PowerPC::DefaultCPUCore()};
 const Info<bool> MAIN_JIT_FOLLOW_BRANCH{{System::Main, "Core", "JITFollowBranch"}, true};
 const Info<bool> MAIN_FASTMEM{{System::Main, "Core", "Fastmem"}, true};
+const Info<bool> MAIN_FASTMEM_ARENA{{System::Main, "Core", "FastmemArena"}, true};
+const Info<bool> MAIN_LARGE_ENTRY_POINTS_MAP{{System::Main, "Core", "LargeEntryPointsMap"}, true};
 const Info<bool> MAIN_ACCURATE_CPU_CACHE{{System::Main, "Core", "AccurateCPUCache"}, false};
 const Info<bool> MAIN_DSP_HLE{{System::Main, "Core", "DSPHLE"}, true};
 const Info<int> MAIN_MAX_FALLBACK{{System::Main, "Core", "MaxFallback"}, 100};
-const Info<int> MAIN_TIMING_VARIANCE{{System::Main, "Core", "TimingVariance"}, 40};
+const Info<int> MAIN_TIMING_VARIANCE{{System::Main, "Core", "TimingVariance"}, 8};
 const Info<bool> MAIN_CPU_THREAD{{System::Main, "Core", "CPUThread"}, true};
 const Info<bool> MAIN_SYNC_ON_SKIP_IDLE{{System::Main, "Core", "SyncOnSkipIdle"}, true};
 const Info<std::string> MAIN_DEFAULT_ISO{{System::Main, "Core", "DefaultISO"}, ""};
@@ -78,8 +86,8 @@ const Info<bool> MAIN_DPL2_DECODER{{System::Main, "Core", "DPL2Decoder"}, false}
 const Info<AudioCommon::DPL2Quality> MAIN_DPL2_QUALITY{{System::Main, "Core", "DPL2Quality"},
                                                        AudioCommon::GetDefaultDPL2Quality()};
 const Info<int> MAIN_AUDIO_LATENCY{{System::Main, "Core", "AudioLatency"}, 20};
-const Info<bool> MAIN_AUDIO_STRETCH{{System::Main, "Core", "AudioStretch"}, false};
-const Info<int> MAIN_AUDIO_STRETCH_LATENCY{{System::Main, "Core", "AudioStretchMaxLatency"}, 80};
+const Info<int> MAIN_AUDIO_BUFFER_SIZE{{System::Main, "Core", "AudioBufferSize"}, 80};
+const Info<bool> MAIN_AUDIO_FILL_GAPS{{System::Main, "Core", "AudioFillGaps"}, true};
 const Info<std::string> MAIN_MEMCARD_A_PATH{{System::Main, "Core", "MemcardAPath"}, ""};
 const Info<std::string> MAIN_MEMCARD_B_PATH{{System::Main, "Core", "MemcardBPath"}, ""};
 const Info<std::string>& GetInfoForMemcardPath(ExpansionInterface::Slot slot)
@@ -139,6 +147,8 @@ const Info<ExpansionInterface::EXIDeviceType> MAIN_SLOT_B{
     {System::Main, "Core", "SlotB"}, ExpansionInterface::EXIDeviceType::Slippi};
 const Info<ExpansionInterface::EXIDeviceType> MAIN_SERIAL_PORT_1{
     {System::Main, "Core", "SerialPort1"}, ExpansionInterface::EXIDeviceType::None};
+const Info<ExpansionInterface::EXIDeviceType> MAIN_SERIAL_PORT_2{
+    {System::Main, "Core", "SerialPort2"}, ExpansionInterface::EXIDeviceType::None};
 
 const Info<ExpansionInterface::EXIDeviceType>& GetInfoForEXIDevice(ExpansionInterface::Slot slot)
 {
@@ -148,6 +158,7 @@ const Info<ExpansionInterface::EXIDeviceType>& GetInfoForEXIDevice(ExpansionInte
           &MAIN_SLOT_A,
           &MAIN_SLOT_B,
           &MAIN_SERIAL_PORT_1,
+          &MAIN_SERIAL_PORT_2,
       };
   return *infos[slot];
 }
@@ -158,7 +169,11 @@ const Info<bool> MAIN_BBA_XLINK_CHAT_OSD{{System::Main, "Core", "BBA_XLINK_CHAT_
 
 // Schthack PSO Server - https://schtserv.com/
 const Info<std::string> MAIN_BBA_BUILTIN_DNS{{System::Main, "Core", "BBA_BUILTIN_DNS"},
-                                             "149.56.167.128"};
+                                             "3.18.217.27"};
+const Info<std::string> MAIN_BBA_TAPSERVER_DESTINATION{
+    {System::Main, "Core", "BBA_TAPSERVER_DESTINATION"}, "/tmp/dolphin-tap"};
+const Info<std::string> MAIN_MODEM_TAPSERVER_DESTINATION{
+    {System::Main, "Core", "MODEM_TAPSERVER_DESTINATION"}, "/tmp/dolphin-modem-tap"};
 const Info<std::string> MAIN_BBA_BUILTIN_IP{{System::Main, "Core", "BBA_BUILTIN_IP"}, ""};
 
 const Info<SerialInterface::SIDevices>& GetInfoForSIDevice(int channel)
@@ -210,9 +225,12 @@ const Info<bool>& GetInfoForSimulateKonga(int channel)
 const Info<bool> MAIN_WII_SD_CARD{{System::Main, "Core", "WiiSDCard"}, true};
 const Info<bool> MAIN_WII_SD_CARD_ENABLE_FOLDER_SYNC{
     {System::Main, "Core", "WiiSDCardEnableFolderSync"}, false};
+const Info<u64> MAIN_WII_SD_CARD_FILESIZE{{System::Main, "Core", "WiiSDCardFilesize"}, 0};
 const Info<bool> MAIN_WII_KEYBOARD{{System::Main, "Core", "WiiKeyboard"}, false};
 const Info<bool> MAIN_WIIMOTE_CONTINUOUS_SCANNING{
     {System::Main, "Core", "WiimoteContinuousScanning"}, false};
+const Info<std::string> MAIN_WIIMOTE_AUTO_CONNECT_ADDRESSES{
+    {System::Main, "Core", "WiimoteAutoConnectAddresses"}, ""};
 const Info<bool> MAIN_WIIMOTE_ENABLE_SPEAKER{{System::Main, "Core", "WiimoteEnableSpeaker"}, false};
 const Info<bool> MAIN_CONNECT_WIIMOTES_FOR_CONTROLLER_INTERFACE{
     {System::Main, "Core", "WiimoteControllerInterface"}, false};
@@ -232,13 +250,24 @@ const Info<bool> MAIN_FPRF{{System::Main, "Core", "FPRF"}, false};
 const Info<bool> MAIN_ACCURATE_NANS{{System::Main, "Core", "AccurateNaNs"}, false};
 const Info<bool> MAIN_DISABLE_ICACHE{{System::Main, "Core", "DisableICache"}, false};
 const Info<float> MAIN_EMULATION_SPEED{{System::Main, "Core", "EmulationSpeed"}, 1.0f};
+#if defined(ANDROID)
+// Currently disabled by default on Android for concern of increased power usage while on battery.
+// It is also not yet exposed in the UI on Android.
+constexpr bool DEFAULT_PRECISION_FRAME_TIMING = false;
+#else
+constexpr bool DEFAULT_PRECISION_FRAME_TIMING = true;
+#endif
+const Info<bool> MAIN_PRECISION_FRAME_TIMING{{System::Main, "Core", "PrecisionFrameTiming"},
+                                             DEFAULT_PRECISION_FRAME_TIMING};
 const Info<float> MAIN_OVERCLOCK{{System::Main, "Core", "Overclock"}, 1.0f};
 const Info<bool> MAIN_OVERCLOCK_ENABLE{{System::Main, "Core", "OverclockEnable"}, false};
+const Info<float> MAIN_VI_OVERCLOCK{{System::Main, "Core", "VIOverclock"}, 1.0f};
+const Info<bool> MAIN_VI_OVERCLOCK_ENABLE{{System::Main, "Core", "VIOverclockEnable"}, false};
 const Info<bool> MAIN_RAM_OVERRIDE_ENABLE{{System::Main, "Core", "RAMOverrideEnable"}, false};
 const Info<u32> MAIN_MEM1_SIZE{{System::Main, "Core", "MEM1Size"}, Memory::MEM1_SIZE_RETAIL};
 const Info<u32> MAIN_MEM2_SIZE{{System::Main, "Core", "MEM2Size"}, Memory::MEM2_SIZE_RETAIL};
 const Info<std::string> MAIN_GFX_BACKEND{{System::Main, "Core", "GFXBackend"},
-                                         VideoBackendBase::GetDefaultBackendName()};
+                                         VideoBackendBase::GetDefaultBackendConfigName()};
 const Info<HSP::HSPDeviceType> MAIN_HSP_DEVICE{{System::Main, "Core", "HSPDevice"},
                                                HSP::HSPDeviceType::None};
 const Info<u32> MAIN_ARAM_EXPANSION_SIZE{{System::Main, "Core", "ARAMExpansionSize"}, 0x400000};
@@ -274,6 +303,7 @@ const Info<bool> MAIN_ALLOW_SD_WRITES{{System::Main, "Core", "WiiSDCardAllowWrit
 const Info<bool> MAIN_ENABLE_SAVESTATES{{System::Main, "Core", "EnableSaveStates"}, false};
 const Info<bool> MAIN_REAL_WII_REMOTE_REPEAT_REPORTS{
     {System::Main, "Core", "RealWiiRemoteRepeatReports"}, true};
+const Info<bool> MAIN_WII_WIILINK_ENABLE{{System::Main, "Core", "EnableWiiLink"}, false};
 
 // Empty means use the Dolphin default URL
 const Info<std::string> MAIN_WII_NUS_SHOP_URL{{System::Main, "Core", "WiiNusShopUrl"}, ""};
@@ -309,6 +339,8 @@ const Info<std::string> MAIN_AUDIO_BACKEND{{System::Main, "DSP", "Backend"},
                                            AudioCommon::GetDefaultSoundBackend()};
 const Info<int> MAIN_AUDIO_VOLUME{{System::Main, "DSP", "Volume"}, 10};
 const Info<bool> MAIN_AUDIO_MUTED{{System::Main, "DSP", "Muted"}, false};
+const Info<bool> MAIN_AUDIO_MUTE_ON_DISABLED_SPEED_LIMIT{
+    {System::Main, "DSP", "MuteOnDisabledSpeedLimit"}, false};
 #ifdef _WIN32
 const Info<std::string> MAIN_WASAPI_DEVICE{{System::Main, "DSP", "WASAPIDevice"}, "Default"};
 #endif
@@ -334,6 +366,9 @@ const Info<std::string> MAIN_WIRELESS_MAC{{System::Main, "General", "WirelessMac
 const Info<std::string> MAIN_GDB_SOCKET{{System::Main, "General", "GDBSocket"}, ""};
 const Info<int> MAIN_GDB_PORT{{System::Main, "General", "GDBPort"}, -1};
 const Info<int> MAIN_ISO_PATH_COUNT{{System::Main, "General", "ISOPaths"}, 0};
+const Info<std::string> MAIN_SKYLANDERS_PATH{{System::Main, "General", "SkylandersCollectionPath"},
+                                             ""};
+const Info<bool> MAIN_TIME_TRACKING{{System::Main, "General", "EnablePlayTimeTracking"}, true};
 
 static Info<std::string> MakeISOPathConfigInfo(size_t idx)
 {
@@ -448,6 +483,7 @@ const Info<bool> MAIN_GAMELIST_LIST_WAD{{System::Main, "GameList", "ListWad"}, t
 const Info<bool> MAIN_GAMELIST_LIST_ELF_DOL{{System::Main, "GameList", "ListElfDol"}, true};
 const Info<bool> MAIN_GAMELIST_LIST_WII{{System::Main, "GameList", "ListWii"}, true};
 const Info<bool> MAIN_GAMELIST_LIST_GC{{System::Main, "GameList", "ListGC"}, true};
+const Info<bool> MAIN_GAMELIST_LIST_TRI{{System::Main, "GameList", "ListTriforce"}, true};
 const Info<bool> MAIN_GAMELIST_LIST_JPN{{System::Main, "GameList", "ListJap"}, true};
 const Info<bool> MAIN_GAMELIST_LIST_PAL{{System::Main, "GameList", "ListPal"}, true};
 const Info<bool> MAIN_GAMELIST_LIST_USA{{System::Main, "GameList", "ListUsa"}, true};
@@ -485,6 +521,8 @@ const Info<bool> MAIN_GAMELIST_COLUMN_BLOCK_SIZE{{System::Main, "GameList", "Col
                                                  false};
 const Info<bool> MAIN_GAMELIST_COLUMN_COMPRESSION{{System::Main, "GameList", "ColumnCompression"},
                                                   false};
+const Info<bool> MAIN_GAMELIST_COLUMN_TIME_PLAYED{{System::Main, "GameList", "ColumnTimePlayed"},
+                                                  true};
 const Info<bool> MAIN_GAMELIST_COLUMN_TAGS{{System::Main, "GameList", "ColumnTags"}, false};
 
 // Main.FifoPlayer
@@ -537,6 +575,8 @@ const Info<bool> MAIN_DEBUG_JIT_SYSTEM_REGISTERS_OFF{
 const Info<bool> MAIN_DEBUG_JIT_BRANCH_OFF{{System::Main, "Debug", "JitBranchOff"}, false};
 const Info<bool> MAIN_DEBUG_JIT_REGISTER_CACHE_OFF{{System::Main, "Debug", "JitRegisterCacheOff"},
                                                    false};
+const Info<bool> MAIN_DEBUG_JIT_ENABLE_PROFILING{{System::Main, "Debug", "JitEnableProfiling"},
+                                                 false};
 
 // Main.BluetoothPassthrough
 
@@ -549,6 +589,8 @@ const Info<std::string> MAIN_BLUETOOTH_PASSTHROUGH_LINK_KEYS{
 
 // Main.USBPassthrough
 
+const Info<bool> MAIN_USB_PASSTHROUGH_DISGUISE_PLAYSTATION_AS_WII{
+    {System::Main, "USBPassthrough", "DisguisePlayStationAsWii"}, true};
 const Info<std::string> MAIN_USB_PASSTHROUGH_DEVICES{{System::Main, "USBPassthrough", "Devices"},
                                                      ""};
 
@@ -594,6 +636,19 @@ void SetUSBDeviceWhitelist(const std::set<std::pair<u16, u16>>& devices)
 
 const Info<bool> MAIN_EMULATE_SKYLANDER_PORTAL{
     {System::Main, "EmulatedUSBDevices", "EmulateSkylanderPortal"}, false};
+
+const Info<bool> MAIN_EMULATE_INFINITY_BASE{
+    {System::Main, "EmulatedUSBDevices", "EmulateInfinityBase"}, false};
+
+const Info<bool> MAIN_EMULATE_WII_SPEAK{{System::Main, "EmulatedUSBDevices", "EmulateWiiSpeak"},
+                                        false};
+
+const Info<std::string> MAIN_WII_SPEAK_MICROPHONE{
+    {System::Main, "EmulatedUSBDevices", "WiiSpeakMicrophone"}, ""};
+
+const Info<bool> MAIN_WII_SPEAK_MUTED{{System::Main, "EmulatedUSBDevices", "WiiSpeakMuted"}, true};
+const Info<s16> MAIN_WII_SPEAK_VOLUME_MODIFIER{
+    {System::Main, "EmulatedUSBDevices", "WiiSpeakVolumeModifier"}, 0};
 
 // The reason we need this function is because some memory card code
 // expects to get a non-NTSC-K region even if we're emulating an NTSC-K Wii.
@@ -769,4 +824,16 @@ bool IsDefaultGCIFolderPathConfigured(ExpansionInterface::Slot slot)
 {
   return Config::Get(GetInfoForGCIPath(slot)).empty();
 }
+
+bool AreCheatsEnabled()
+{
+  return Config::Get(::Config::MAIN_ENABLE_CHEATS);
+}
+
+bool IsDebuggingEnabled()
+{
+  return Config::Get(::Config::MAIN_ENABLE_DEBUGGING) &&
+         !AchievementManager::GetInstance().IsHardcoreModeActive();
+}
+
 }  // namespace Config

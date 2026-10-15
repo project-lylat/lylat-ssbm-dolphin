@@ -12,6 +12,7 @@ JNIEnv* GetEnvForThread();
 jclass GetStringClass();
 
 jclass GetNativeLibraryClass();
+jmethodID GetDisplayToastMsg();
 jmethodID GetDisplayAlertMsg();
 jmethodID GetUpdateTouchPointer();
 jmethodID GetOnTitleChanged();
@@ -28,15 +29,12 @@ jmethodID GetGameFileConstructor();
 jclass GetGameFileCacheClass();
 jfieldID GetGameFileCachePointer();
 
-jclass GetLinkedHashMapClass();
-jmethodID GetLinkedHashMapInit();
-jmethodID GetLinkedHashMapPut();
+jclass GetPairClass();
+jmethodID GetPairConstructor();
 
-jclass GetIniFileClass();
-jfieldID GetIniFilePointer();
-jclass GetIniFileSectionClass();
-jfieldID GetIniFileSectionPointer();
-jmethodID GetIniFileSectionConstructor();
+jclass GetHashMapClass();
+jmethodID GetHashMapInit();
+jmethodID GetHashMapPut();
 
 jclass GetCompressCallbackClass();
 jmethodID GetCompressCallbackRun();
@@ -94,6 +92,10 @@ jclass GetControlReferenceClass();
 jfieldID GetControlReferencePointer();
 jmethodID GetControlReferenceConstructor();
 
+jclass GetControlGroupContainerClass();
+jfieldID GetControlGroupContainerPointer();
+jmethodID GetControlGroupContainerConstructor();
+
 jclass GetEmulatedControllerClass();
 jfieldID GetEmulatedControllerPointer();
 jmethodID GetEmulatedControllerConstructor();
@@ -109,5 +111,14 @@ jmethodID GetCoreDeviceConstructor();
 jclass GetCoreDeviceControlClass();
 jfieldID GetCoreDeviceControlPointer();
 jmethodID GetCoreDeviceControlConstructor();
+
+jclass GetInputDetectorClass();
+jfieldID GetInputDetectorPointer();
+
+jclass GetPermissionHandlerClass();
+jmethodID GetPermissionHandlerHasRecordAudioPermission();
+jmethodID GetPermissionHandlerRequestRecordAudioPermission();
+
+jmethodID GetRunnableRun();
 
 }  // namespace IDCache

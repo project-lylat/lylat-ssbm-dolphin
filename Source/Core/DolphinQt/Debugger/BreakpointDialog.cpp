@@ -251,7 +251,7 @@ void BreakpointDialog::OnAddressTypeChanged()
 
 void BreakpointDialog::accept()
 {
-  auto invalid_input = [this](QString field) {
+  auto invalid_input = [this](const QString& field) {
     ModalMessageBox::critical(this, tr("Error"),
                               tr("Invalid input for the field \"%1\"").arg(field));
   };
@@ -289,7 +289,7 @@ void BreakpointDialog::accept()
       return;
     }
 
-    m_parent->AddBP(address, false, do_break, do_log, condition);
+    m_parent->AddBP(address, do_break, do_log, condition);
   }
   else
   {
@@ -323,7 +323,7 @@ void BreakpointDialog::accept()
 
 void BreakpointDialog::ShowConditionHelp()
 {
-  const auto message = QStringLiteral(
+  const auto message = tr(
       "Conditions:\n"
       "Sets an expression that is evaluated when a breakpoint is hit. If the expression is false "
       "or 0, the breakpoint is ignored until hit again. Statements should be separated by a comma. "
@@ -331,7 +331,12 @@ void BreakpointDialog::ShowConditionHelp()
       "\n"
       "Registers that can be referenced:\n"
       "GPRs : r0..r31\n"
-      "FPRs : f0..f31\n LR, CTR, PC\n"
+      "FPRs : f0..f31\n"
+      "SPRs : xer, lr, ctr, dsisr, dar, dec, sdr1, srr0, srr1, tbl, tbu, pvr, sprg0..sprg3, ear, "
+      "ibat0u..ibat7u, ibat0l..ibat7l, dbat0u..dbat7u, dbat0l..dbat07, gqr0..gqr7, hid0, hid1, "
+      "hid2, hid4, iabr, dabr, wpar, dmau, dmal, ecid_u, ecid_m, ecid_l, upmc1..upmc4, usia, sia, "
+      "l2cr, ictc, mmcr0, mmcr1, pmc1..pmc4, thrm1..thrm3\n"
+      "Other : pc, msr\n"
       "\n"
       "Functions:\n"
       "Set a register: r1 = 8\n"

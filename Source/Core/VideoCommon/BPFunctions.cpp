@@ -10,12 +10,13 @@
 #include "Common/Assert.h"
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
+#include "Common/SmallVector.h"
 
 #include "VideoCommon/AbstractFramebuffer.h"
 #include "VideoCommon/AbstractGfx.h"
 #include "VideoCommon/BPMemory.h"
+#include "VideoCommon/EFBInterface.h"
 #include "VideoCommon/FramebufferManager.h"
-#include "VideoCommon/RenderBase.h"
 #include "VideoCommon/RenderState.h"
 #include "VideoCommon/VertexManagerBase.h"
 #include "VideoCommon/VertexShaderManager.h"
@@ -76,26 +77,7 @@ bool ScissorResult::IsWorse(const ScissorRect& lhs, const ScissorRect& rhs) cons
 
 namespace
 {
-// Dynamically sized small array of ScissorRanges (used as an heap-less alternative to std::vector
-// to reduce allocation overhead)
-struct RangeList
-{
-  static constexpr u32 MAX_RANGES = 9;
-
-  u32 m_num_ranges = 0;
-  std::array<ScissorRange, MAX_RANGES> m_ranges{};
-
-  void AddRange(int offset, int start, int end)
-  {
-    DEBUG_ASSERT(m_num_ranges < MAX_RANGES);
-    m_ranges[m_num_ranges] = ScissorRange(offset, start, end);
-    m_num_ranges++;
-  }
-  auto begin() const { return m_ranges.begin(); }
-  auto end() const { return m_ranges.begin() + m_num_ranges; }
-
-  u32 size() { return m_num_ranges; }
-};
+using RangeList = Common::SmallVector<ScissorRange, 9>;
 
 static RangeList ComputeScissorRanges(int start, int end, int offset, int efb_dim)
 {
@@ -108,7 +90,7 @@ static RangeList ComputeScissorRanges(int start, int end, int offset, int efb_di
     int new_end = std::clamp(end - new_off + 1, 0, efb_dim);
     if (new_start < new_end)
     {
-      ranges.AddRange(new_off, new_start, new_end);
+      ranges.emplace_back(new_off, new_start, new_end);
     }
   }
 
@@ -169,7 +151,7 @@ ScissorResult::ScissorResult(const BPMemory& bpmemory, std::pair<float, float> v
   }
 
   auto cmp = [&](const ScissorRect& lhs, const ScissorRect& rhs) { return IsWorse(lhs, rhs); };
-  std::sort(m_result.begin(), m_result.end(), cmp);
+  std::ranges::sort(m_result, cmp);
 }
 
 ScissorRect ScissorResult::Best() const
@@ -239,7 +221,7 @@ void SetScissorAndViewport()
   // floating-point round-trip errors. However the console GPU doesn't ever write a value
   // to the depth buffer that exceeds 2^24 - 1.
   constexpr float GX_MAX_DEPTH = 16777215.0f / 16777216.0f;
-  if (!g_ActiveConfig.backend_info.bSupportsDepthClamp)
+  if (!g_backend_info.bSupportsDepthClamp)
   {
     // There's no way to support oversized depth ranges in this situation. Let's just clamp the
     // range to the maximum value supported by the console GPU and hope for the best.
@@ -251,7 +233,7 @@ void SetScissorAndViewport()
   {
     // We need to ensure depth values are clamped the maximum value supported by the console GPU.
     // Taking into account whether the depth range is inverted or not.
-    if (xfmem.viewport.zRange < 0.0f && g_ActiveConfig.backend_info.bSupportsReversedDepthRange)
+    if (xfmem.viewport.zRange < 0.0f && g_backend_info.bSupportsReversedDepthRange)
     {
       min_depth = GX_MAX_DEPTH;
       max_depth = 0.0f;
@@ -264,7 +246,7 @@ void SetScissorAndViewport()
   }
 
   float near_depth, far_depth;
-  if (g_ActiveConfig.backend_info.bSupportsReversedDepthRange)
+  if (g_backend_info.bSupportsReversedDepthRange)
   {
     // Set the reversed depth range.
     near_depth = max_depth;
@@ -280,7 +262,7 @@ void SetScissorAndViewport()
   }
 
   // Lower-left flip.
-  if (g_ActiveConfig.backend_info.bUsesLowerLeftOrigin)
+  if (g_backend_info.bUsesLowerLeftOrigin)
     y = static_cast<float>(g_gfx->GetCurrentFramebuffer()->GetHeight()) - y - height;
 
   g_gfx->SetViewport(x, y, width, height, near_depth, far_depth);
@@ -387,12 +369,12 @@ void OnPixelFormatChange()
 
     if (new_format == PixelFormat::RGBA6_Z24)
     {
-      g_renderer->ReinterpretPixelData(EFBReinterpretType::RGB8ToRGBA6);
+      g_efb_interface->ReinterpretPixelData(EFBReinterpretType::RGB8ToRGBA6);
       return;
     }
     else if (new_format == PixelFormat::RGB565_Z16)
     {
-      g_renderer->ReinterpretPixelData(EFBReinterpretType::RGB8ToRGB565);
+      g_efb_interface->ReinterpretPixelData(EFBReinterpretType::RGB8ToRGB565);
       return;
     }
   }
@@ -402,12 +384,12 @@ void OnPixelFormatChange()
   {
     if (new_format == PixelFormat::RGB8_Z24 || new_format == PixelFormat::Z24)
     {
-      g_renderer->ReinterpretPixelData(EFBReinterpretType::RGBA6ToRGB8);
+      g_efb_interface->ReinterpretPixelData(EFBReinterpretType::RGBA6ToRGB8);
       return;
     }
     else if (new_format == PixelFormat::RGB565_Z16)
     {
-      g_renderer->ReinterpretPixelData(EFBReinterpretType::RGBA6ToRGB565);
+      g_efb_interface->ReinterpretPixelData(EFBReinterpretType::RGBA6ToRGB565);
       return;
     }
   }
@@ -417,12 +399,12 @@ void OnPixelFormatChange()
   {
     if (new_format == PixelFormat::RGB8_Z24 || new_format == PixelFormat::Z24)
     {
-      g_renderer->ReinterpretPixelData(EFBReinterpretType::RGB565ToRGB8);
+      g_efb_interface->ReinterpretPixelData(EFBReinterpretType::RGB565ToRGB8);
       return;
     }
     else if (new_format == PixelFormat::RGBA6_Z24)
     {
-      g_renderer->ReinterpretPixelData(EFBReinterpretType::RGB565ToRGBA6);
+      g_efb_interface->ReinterpretPixelData(EFBReinterpretType::RGB565ToRGBA6);
       return;
     }
   }
@@ -460,4 +442,4 @@ void SetInterlacingMode(const BPCmd& bp)
     break;
   }
 }
-};  // namespace BPFunctions
+}  // namespace BPFunctions

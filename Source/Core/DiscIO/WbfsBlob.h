@@ -15,7 +15,7 @@ namespace DiscIO
 {
 static constexpr u32 WBFS_MAGIC = 0x53464257;  // "WBFS" (byteswapped to little endian)
 
-class WbfsFileReader : public BlobReader
+class WbfsFileReader final : public BlobReader
 {
 public:
   ~WbfsFileReader();
@@ -23,6 +23,7 @@ public:
   static std::unique_ptr<WbfsFileReader> Create(File::IOFile file, const std::string& path);
 
   BlobType GetBlobType() const override { return BlobType::WBFS; }
+  std::unique_ptr<BlobReader> CopyReader() const override;
 
   u64 GetRawSize() const override { return m_size; }
   u64 GetDataSize() const override;
@@ -36,14 +37,14 @@ public:
   bool Read(u64 offset, u64 nbytes, u8* out_ptr) override;
 
 private:
-  WbfsFileReader(File::IOFile file, const std::string& path);
+  WbfsFileReader(File::IOFile file, const std::string& path = "");
 
   void OpenAdditionalFiles(const std::string& path);
   bool AddFileToList(File::IOFile file);
   bool ReadHeader();
 
   File::IOFile& SeekToCluster(u64 offset, u64* available);
-  bool IsGood() { return m_good; }
+  bool IsGood() const { return m_good; }
   struct FileEntry
   {
     FileEntry(File::IOFile file_, u64 base_address_, u64 size_)

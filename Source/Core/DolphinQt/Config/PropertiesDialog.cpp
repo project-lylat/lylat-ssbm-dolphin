@@ -51,12 +51,21 @@ PropertiesDialog::PropertiesDialog(QWidget* parent, const UICommon::GameFile& ga
           &PropertiesDialog::OpenGeneralSettings);
 
   connect(ar, &ARCodeWidget::OpenGeneralSettings, this, &PropertiesDialog::OpenGeneralSettings);
+#ifdef USE_RETRO_ACHIEVEMENTS
+  connect(ar, &ARCodeWidget::OpenAchievementSettings, this,
+          &PropertiesDialog::OpenAchievementSettings);
+  connect(gecko, &GeckoCodeWidget::OpenAchievementSettings, this,
+          &PropertiesDialog::OpenAchievementSettings);
+  connect(patches, &PatchesWidget::OpenAchievementSettings, this,
+          &PropertiesDialog::OpenAchievementSettings);
+#endif  // USE_RETRO_ACHIEVEMENTS
 
   connect(graphics_mod_list, &GraphicsModListWidget::OpenGraphicsSettings, this,
           &PropertiesDialog::OpenGraphicsSettings);
 
   const int padding_width = 120;
   const int padding_height = 100;
+  tab_widget->addTab(GetWrappedWidget(info, this, padding_width, padding_height), tr("Info"));
   tab_widget->addTab(GetWrappedWidget(game_config, this, padding_width, padding_height),
                      tr("Game Config"));
   tab_widget->addTab(GetWrappedWidget(patches, this, padding_width, padding_height), tr("Patches"));
@@ -65,7 +74,6 @@ PropertiesDialog::PropertiesDialog(QWidget* parent, const UICommon::GameFile& ga
                      tr("Gecko Codes"));
   tab_widget->addTab(GetWrappedWidget(graphics_mod_list, this, padding_width, padding_height),
                      tr("Graphics Mods"));
-  tab_widget->addTab(GetWrappedWidget(info, this, padding_width, padding_height), tr("Info"));
 
   if (game.GetPlatform() != DiscIO::Platform::ELFOrDOL)
   {

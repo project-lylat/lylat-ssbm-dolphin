@@ -3,7 +3,6 @@ project(lzma C)
 include(CheckTypeSize)
 include(CheckFunctionExists)
 include(CheckIncludeFile)
-include(CheckCSourceCompiles)
 
 check_include_file(sys/types.h HAVE_SYS_TYPES_H)
 check_include_file(stdint.h    HAVE_STDINT_H)
@@ -207,7 +206,7 @@ set(LZMA_SRCS
 
 add_library(lzma STATIC ${LZMA_SRCS} ${LZMA_PUBLIC_HDRS})
 add_library(LibLZMA::LibLZMA ALIAS lzma)
-dolphin_disable_warnings_msvc(lzma)
+dolphin_disable_warnings(lzma)
 
 target_compile_definitions(lzma PUBLIC LZMA_API_STATIC)
 

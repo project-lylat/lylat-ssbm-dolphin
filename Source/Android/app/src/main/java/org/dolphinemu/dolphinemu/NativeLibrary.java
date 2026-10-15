@@ -12,6 +12,7 @@ import android.view.Surface;
 import android.widget.Toast;
 
 import androidx.annotation.Keep;
+import androidx.core.util.Pair;
 import androidx.fragment.app.FragmentManager;
 
 import org.dolphinemu.dolphinemu.activities.EmulationActivity;
@@ -20,7 +21,7 @@ import org.dolphinemu.dolphinemu.utils.CompressCallback;
 import org.dolphinemu.dolphinemu.utils.Log;
 
 import java.lang.ref.WeakReference;
-import java.util.LinkedHashMap;
+import java.util.concurrent.Semaphore;
 
 /**
  * Class which contains methods that interact
@@ -28,7 +29,7 @@ import java.util.LinkedHashMap;
  */
 public final class NativeLibrary
 {
-  private static final Object sAlertMessageLock = new Object();
+  private static final Semaphore sAlertMessageSemaphore = new Semaphore(0);
   private static boolean sIsShowingAlertMessage = false;
 
   private static WeakReference<EmulationActivity> sEmulationActivity = new WeakReference<>(null);
@@ -297,9 +298,11 @@ public final class NativeLibrary
 
   public static native void SetCacheDirectory(String directory);
 
+  public static native String GetCacheDirectory();
+
   public static native int DefaultCPUCore();
 
-  public static native String GetDefaultGraphicsBackendName();
+  public static native String GetDefaultGraphicsBackendConfigName();
 
   public static native int GetMaxLogLevel();
 
@@ -378,21 +381,25 @@ public final class NativeLibrary
    */
   public static native boolean IsRunning();
 
-  public static native boolean IsRunningAndStarted();
-
+  /**
+   * Returns true if emulation is running and not paused.
+   */
   public static native boolean IsRunningAndUnpaused();
 
   /**
-   * Enables or disables CPU block profiling
-   *
-   * @param enable
+   * Returns true if emulation is fully shut down.
    */
-  public static native void SetProfiling(boolean enable);
+  public static native boolean IsUninitialized();
 
   /**
-   * Writes out the block profile results
+   * Re-initialize software JitBlock profiling data
    */
-  public static native void WriteProfileResults();
+  public static native void WipeJitBlockProfilingData();
+
+  /**
+   * Writes out the JitBlock Cache log dump
+   */
+  public static native void WriteJitBlockLogDump();
 
   /**
    * Native EGL functions not exposed by Java bindings
@@ -404,7 +411,7 @@ public final class NativeLibrary
    */
   public static native void RefreshWiimotes();
 
-  public static native LinkedHashMap<String, String> GetLogTypeNames();
+  public static native Pair<String, String>[] GetLogTypeNames();
 
   public static native void ReloadLoggerConfig();
 
@@ -453,6 +460,14 @@ public final class NativeLibrary
   private static native String GetCurrentTitleDescriptionUnchecked();
 
   @Keep
+  public static void displayToastMsg(final String text, final boolean long_length)
+  {
+    final int length = long_length ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT;
+    new Handler(Looper.getMainLooper())
+            .post(() -> Toast.makeText(DolphinApplication.getAppContext(), text, length).show());
+  }
+
+  @Keep
   public static boolean displayAlertMsg(final String caption, final String text,
           final boolean yesNo, final boolean isWarning, final boolean nonBlocking)
   {
@@ -464,9 +479,7 @@ public final class NativeLibrary
     // and are allowed to block. As a fallback, we can use toasts.
     if (emulationActivity == null || nonBlocking)
     {
-      new Handler(Looper.getMainLooper()).post(
-              () -> Toast.makeText(DolphinApplication.getAppContext(), text, Toast.LENGTH_LONG)
-                      .show());
+      displayToastMsg(text, true);
     }
     else
     {
@@ -490,15 +503,12 @@ public final class NativeLibrary
       });
 
       // Wait for the lock to notify that it is complete.
-      synchronized (sAlertMessageLock)
+      try
       {
-        try
-        {
-          sAlertMessageLock.wait();
-        }
-        catch (Exception ignored)
-        {
-        }
+        sAlertMessageSemaphore.acquire();
+      }
+      catch (InterruptedException ignored)
+      {
       }
 
       if (yesNo)
@@ -518,10 +528,7 @@ public final class NativeLibrary
 
   public static void NotifyAlertMessageLock()
   {
-    synchronized (sAlertMessageLock)
-    {
-      sAlertMessageLock.notify();
-    }
+    sAlertMessageSemaphore.release();
   }
 
   public static void setEmulationActivity(EmulationActivity emulationActivity)

@@ -61,9 +61,10 @@ std::string GetName(BlobType blob_type, bool translate);
 class BlobReader
 {
 public:
-  virtual ~BlobReader() {}
+  virtual ~BlobReader() = default;
 
   virtual BlobType GetBlobType() const = 0;
+  virtual std::unique_ptr<BlobReader> CopyReader() const = 0;
 
   virtual u64 GetRawSize() const = 0;
   virtual u64 GetDataSize() const = 0;
@@ -195,12 +196,12 @@ using CompressCB = std::function<bool(const std::string& text, float percent)>;
 
 bool ConvertToGCZ(BlobReader* infile, const std::string& infile_path,
                   const std::string& outfile_path, u32 sub_type, int sector_size,
-                  CompressCB callback);
+                  const CompressCB& callback);
 bool ConvertToPlain(BlobReader* infile, const std::string& infile_path,
-                    const std::string& outfile_path, CompressCB callback);
+                    const std::string& outfile_path, const CompressCB& callback);
 bool ConvertToWIAOrRVZ(BlobReader* infile, const std::string& infile_path,
                        const std::string& outfile_path, bool rvz,
                        WIARVZCompressionType compression_type, int compression_level,
-                       int chunk_size, CompressCB callback);
+                       int chunk_size, const CompressCB& callback);
 
 }  // namespace DiscIO

@@ -6,17 +6,23 @@
 #include <memory>
 
 #include "Common/CommonTypes.h"
+#include "Common/MsgHandler.h"
 #include "Core/HW/EXI/EXI_DeviceAD16.h"
 #include "Core/HW/EXI/EXI_DeviceAGP.h"
+#include "Core/HW/EXI/EXI_DeviceBaseboard.h"
 #include "Core/HW/EXI/EXI_DeviceDummy.h"
 #include "Core/HW/EXI/EXI_DeviceEthernet.h"
 #include "Core/HW/EXI/EXI_DeviceGecko.h"
 #include "Core/HW/EXI/EXI_DeviceIPL.h"
 #include "Core/HW/EXI/EXI_DeviceMemoryCard.h"
-#include "Core/HW/EXI/EXI_DeviceMic.h"
 #include "Core/HW/EXI/EXI_DeviceSlippi.h"
+#include "Core/HW/EXI/EXI_DeviceModem.h"
 #include "Core/HW/Memmap.h"
 #include "Core/System.h"
+
+#ifdef HAVE_CUBEB
+#include "Core/HW/EXI/EXI_DeviceMic.h"
+#endif
 
 namespace ExpansionInterface
 {
@@ -90,10 +96,6 @@ void IEXIDevice::DoState(PointerWrap& p)
 {
 }
 
-void IEXIDevice::PauseAndLock(bool do_lock, bool resume_on_unlock)
-{
-}
-
 bool IEXIDevice::IsInterruptSet()
 {
   return false;
@@ -136,18 +138,21 @@ std::unique_ptr<IEXIDevice> EXIDevice_Create(Core::System& system, const EXIDevi
     break;
 
   case EXIDeviceType::Microphone:
+#ifdef HAVE_CUBEB
     result = std::make_unique<CEXIMic>(system, channel_num);
+#else
+    PanicAlertFmtT("Dolphin was built with Cubeb disabled. The Microphone device cannot be used.");
+    result = std::make_unique<IEXIDevice>(system);
+#endif
     break;
 
   case EXIDeviceType::Ethernet:
     result = std::make_unique<CEXIETHERNET>(system, BBADeviceType::TAP);
     break;
 
-#if defined(__APPLE__)
   case EXIDeviceType::EthernetTapServer:
     result = std::make_unique<CEXIETHERNET>(system, BBADeviceType::TAPSERVER);
     break;
-#endif
 
   case EXIDeviceType::EthernetXLink:
     result = std::make_unique<CEXIETHERNET>(system, BBADeviceType::XLINK);
@@ -155,6 +160,10 @@ std::unique_ptr<IEXIDevice> EXIDevice_Create(Core::System& system, const EXIDevi
 
   case EXIDeviceType::EthernetBuiltIn:
     result = std::make_unique<CEXIETHERNET>(system, BBADeviceType::BuiltIn);
+    break;
+
+  case EXIDeviceType::ModemTapServer:
+    result = std::make_unique<CEXIModem>(system, ModemDeviceType::TAPSERVER);
     break;
 
   case EXIDeviceType::Gecko:
@@ -169,7 +178,10 @@ std::unique_ptr<IEXIDevice> EXIDevice_Create(Core::System& system, const EXIDevi
     result = std::make_unique<CEXISlippi>(system, current_file_name);
     break;
 
-  case EXIDeviceType::AMBaseboard:
+  case EXIDeviceType::Baseboard:
+    result = std::make_unique<CEXIBaseboard>(system);
+    break;
+
   case EXIDeviceType::None:
   default:
     result = std::make_unique<IEXIDevice>(system);

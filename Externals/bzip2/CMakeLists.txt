@@ -3,7 +3,6 @@ project(bzip2 C)
 include(CheckTypeSize)
 include(CheckFunctionExists)
 include(CheckIncludeFile)
-include(CheckCSourceCompiles)
 
 check_include_file(sys/types.h HAVE_SYS_TYPES_H)
 check_include_file(stdint.h    HAVE_STDINT_H)
@@ -70,7 +69,7 @@ set(BZIP2_SRCS
 
 add_library(bzip2 STATIC ${BZIP2_SRCS} ${BZIP2_PUBLIC_HDRS} ${BZIP2_PRIVATE_HDRS})
 add_library(BZip2::BZip2 ALIAS bzip2)
-dolphin_disable_warnings_msvc(bzip2)
+dolphin_disable_warnings(bzip2)
 
 target_include_directories(bzip2
 PUBLIC

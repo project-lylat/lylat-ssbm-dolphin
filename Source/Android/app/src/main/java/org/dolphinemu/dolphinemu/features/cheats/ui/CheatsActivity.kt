@@ -10,10 +10,10 @@ import android.view.Menu
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.MarginLayoutParams
+import androidx.activity.enableEdgeToEdge
 import androidx.annotation.ColorInt
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.ViewModelProvider
@@ -24,6 +24,7 @@ import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.elevation.ElevationOverlayProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.dolphinemu.dolphinemu.R
 import org.dolphinemu.dolphinemu.databinding.ActivityCheatsBinding
@@ -50,6 +51,7 @@ class CheatsActivity : AppCompatActivity(), PanelSlideListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeHelper.setTheme(this)
+        enableEdgeToEdge()
 
         super.onCreate(savedInstanceState)
 
@@ -67,8 +69,6 @@ class CheatsActivity : AppCompatActivity(), PanelSlideListener {
 
         binding = ActivityCheatsBinding.inflate(layoutInflater)
         setContentView(binding.root)
-
-        WindowCompat.setDecorFitsSystemWindows(window, false)
 
         cheatListLastFocus = binding.cheatList
         cheatDetailsLastFocus = binding.cheatDetails
@@ -160,7 +160,7 @@ class CheatsActivity : AppCompatActivity(), PanelSlideListener {
 
     fun loadGameSpecificSettings(): Settings {
         val settings = Settings()
-        settings.loadSettings(null, gameId, revision, isWii)
+        settings.loadSettings(gameId!!, revision, isWii)
         return settings
     }
 
@@ -171,7 +171,7 @@ class CheatsActivity : AppCompatActivity(), PanelSlideListener {
             .setCancelable(false)
             .show()
 
-        lifecycleScope.launchWhenResumed {
+        lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 val codes = downloadCodes(gameTdbId!!)
                 withContext(Dispatchers.Main) {
@@ -224,10 +224,6 @@ class CheatsActivity : AppCompatActivity(), PanelSlideListener {
             binding.cheatDetails.layoutParams = mlpDetails
 
             InsetsHelper.applyNavbarWorkaround(barInsets.bottom, binding.workaroundView)
-            ThemeHelper.setNavigationBarColor(
-                this,
-                MaterialColors.getColor(binding.appbarCheats, R.attr.colorSurface)
-            )
 
             windowInsets
         }

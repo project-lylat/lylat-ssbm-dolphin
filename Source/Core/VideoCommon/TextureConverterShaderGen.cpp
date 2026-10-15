@@ -19,6 +19,26 @@ TCShaderUid GetShaderUid(EFBCopyFormat dst_format, bool is_depth_copy, bool is_i
   TCShaderUid out;
 
   UidData* const uid_data = out.GetUidData();
+  if (g_ActiveConfig.bForceTrueColor)
+  {
+    // Increase the precision of EFB copies where it's likely to be safe.
+    switch (dst_format)
+    {
+    case EFBCopyFormat::RGB565:
+      // HACK: XFB is RGB8.
+      // Don't blindly do this in other places though,
+      // the enum value is used to identify XFB copies.
+      // The important thing here is that we need alpha = 1.
+      dst_format = EFBCopyFormat::XFB;
+      break;
+    case EFBCopyFormat::RGB5A3:
+      dst_format = EFBCopyFormat::RGBA8;
+      break;
+    default:
+      // Let's not touch the other formats for now, seems risky.
+      break;
+    }
+  }
   uid_data->dst_format = dst_format;
   uid_data->efb_has_alpha = bpmem.zcontrol.pixel_format == PixelFormat::RGBA6_Z24;
   uid_data->is_depth_copy = is_depth_copy;
@@ -49,7 +69,7 @@ ShaderCode GenerateVertexShader(APIType api_type)
   ShaderCode out;
   WriteHeader(api_type, out);
 
-  if (g_ActiveConfig.backend_info.bSupportsGeometryShaders)
+  if (g_backend_info.bSupportsGeometryShaders)
   {
     out.Write("VARYING_LOCATION(0) out VertexData {{\n"
               "  float3 v_tex0;\n"
@@ -90,7 +110,7 @@ ShaderCode GeneratePixelShader(APIType api_type, const UidData* uid_data)
             mono_depth ? "0.0" : "uv.z");
   if (uid_data->is_depth_copy)
   {
-    if (!g_ActiveConfig.backend_info.bSupportsReversedDepthRange)
+    if (!g_backend_info.bSupportsReversedDepthRange)
       out.Write("  tex_sample.x = 1.0 - tex_sample.x;\n");
 
     out.Write("  uint depth = uint(tex_sample.x * 16777216.0);\n"
@@ -103,7 +123,7 @@ ShaderCode GeneratePixelShader(APIType api_type, const UidData* uid_data)
               "}}\n");
   }
 
-  if (g_ActiveConfig.backend_info.bSupportsGeometryShaders)
+  if (g_backend_info.bSupportsGeometryShaders)
   {
     out.Write("VARYING_LOCATION(0) in VertexData {{\n"
               "  float3 v_tex0;\n"

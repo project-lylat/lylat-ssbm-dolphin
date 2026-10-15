@@ -7,19 +7,16 @@
 #include <cstring>
 
 #include "Common/Assert.h"
-#include "Common/BitUtils.h"
 #include "Common/Common.h"
 #include "Common/CommonTypes.h"
 
 #include "Core/HW/WiimoteEmu/Extension/DesiredExtensionState.h"
 #include "Core/HW/WiimoteEmu/WiimoteEmu.h"
 
-#include "InputCommon/ControllerEmu/Control/Input.h"
 #include "InputCommon/ControllerEmu/ControlGroup/AnalogStick.h"
 #include "InputCommon/ControllerEmu/ControlGroup/Buttons.h"
 #include "InputCommon/ControllerEmu/ControlGroup/ControlGroup.h"
 #include "InputCommon/ControllerEmu/ControlGroup/Slider.h"
-#include "InputCommon/ControllerEmu/ControlGroup/Triggers.h"
 
 namespace WiimoteEmu
 {
@@ -48,18 +45,20 @@ constexpr std::array<const char*, 6> turntable_button_names{{
 
 Turntable::Turntable() : Extension1stParty("Turntable", _trans("DJ Turntable"))
 {
+  using Translatability = ControllerEmu::Translatability;
+
   // buttons
   groups.emplace_back(m_buttons = new ControllerEmu::Buttons(_trans("Buttons")));
   for (auto& turntable_button_name : turntable_button_names)
   {
-    m_buttons->AddInput(ControllerEmu::Translate, turntable_button_name);
+    m_buttons->AddInput(Translatability::Translate, turntable_button_name);
   }
 
-  m_buttons->AddInput(ControllerEmu::DoNotTranslate, "-");
-  m_buttons->AddInput(ControllerEmu::DoNotTranslate, "+");
+  m_buttons->AddInput(Translatability::DoNotTranslate, "-");
+  m_buttons->AddInput(Translatability::DoNotTranslate, "+");
 
   // i18n: This button name refers to a gameplay element in DJ Hero
-  m_buttons->AddInput(ControllerEmu::Translate, _trans("Euphoria"));
+  m_buttons->AddInput(Translatability::Translate, _trans("Euphoria"));
 
   // turntables
   // i18n: "Table" refers to a turntable
@@ -82,6 +81,8 @@ Turntable::Turntable() : Extension1stParty("Turntable", _trans("DJ Turntable"))
 
 void Turntable::BuildDesiredExtensionState(DesiredExtensionState* target_state)
 {
+  using ControllerEmu::MapFloat;
+
   DataFormat tt_data = {};
 
   // stick

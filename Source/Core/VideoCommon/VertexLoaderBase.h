@@ -46,14 +46,11 @@ private:
   }
 };
 
-namespace std
-{
 template <>
-struct hash<VertexLoaderUID>
+struct std::hash<VertexLoaderUID>
 {
-  size_t operator()(const VertexLoaderUID& uid) const { return uid.GetHash(); }
+  size_t operator()(const VertexLoaderUID& uid) const noexcept { return uid.GetHash(); }
 };
-}  // namespace std
 
 class VertexLoaderBase
 {
@@ -76,9 +73,9 @@ public:
 
 protected:
   VertexLoaderBase(const TVtxDesc& vtx_desc, const VAT& vtx_attr)
-      : m_vertex_size{GetVertexSize(vtx_desc, vtx_attr)}, m_native_components{GetVertexComponents(
-                                                              vtx_desc, vtx_attr)},
-        m_VtxAttr{vtx_attr}, m_VtxDesc{vtx_desc}
+      : m_vertex_size{GetVertexSize(vtx_desc, vtx_attr)},
+        m_native_components{GetVertexComponents(vtx_desc, vtx_attr)}, m_VtxAttr{vtx_attr},
+        m_VtxDesc{vtx_desc}
   {
   }
 

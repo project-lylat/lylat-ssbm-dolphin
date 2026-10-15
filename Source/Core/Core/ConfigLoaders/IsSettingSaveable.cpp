@@ -4,43 +4,31 @@
 #include "Core/ConfigLoaders/IsSettingSaveable.h"
 
 #include <algorithm>
-#include <vector>
+#include <array>
 
-#include "Common/Config/Config.h"
-#include "Core/Config/GraphicsSettings.h"
-#include "Core/Config/MainSettings.h"
-#include "Core/Config/UISettings.h"
+#include "Common/Contains.h"
 #include "Core/Config/WiimoteSettings.h"
 
 namespace ConfigLoaders
 {
 bool IsSettingSaveable(const Config::Location& config_location)
 {
-  for (Config::System system :
-       {Config::System::SYSCONF, Config::System::GFX, Config::System::DualShockUDPClient,
-        Config::System::Logger, Config::System::FreeLook, Config::System::Main})
+  static constexpr std::array systems_not_saveable = {Config::System::GCPad, Config::System::WiiPad,
+                                                      Config::System::GCKeyboard};
+
+  if (!Common::Contains(systems_not_saveable, config_location.system))
   {
-    if (config_location.system == system)
-      return true;
+    return true;
   }
 
   static const auto s_setting_saveable = {
-      // UI.General
-
-      &Config::MAIN_USE_DISCORD_PRESENCE.GetLocation(),
-
-      // Wiimote
-
-      &Config::WIIMOTE_1_SOURCE.GetLocation(),
-      &Config::WIIMOTE_2_SOURCE.GetLocation(),
-      &Config::WIIMOTE_3_SOURCE.GetLocation(),
-      &Config::WIIMOTE_4_SOURCE.GetLocation(),
+      &Config::WIIMOTE_1_SOURCE.GetLocation(),  &Config::WIIMOTE_2_SOURCE.GetLocation(),
+      &Config::WIIMOTE_3_SOURCE.GetLocation(),  &Config::WIIMOTE_4_SOURCE.GetLocation(),
       &Config::WIIMOTE_BB_SOURCE.GetLocation(),
   };
 
-  return std::any_of(begin(s_setting_saveable), end(s_setting_saveable),
-                     [&config_location](const Config::Location* location) {
-                       return *location == config_location;
-                     });
+  return std::ranges::any_of(s_setting_saveable, [&config_location](const auto* location) {
+    return *location == config_location;
+  });
 }
 }  // namespace ConfigLoaders

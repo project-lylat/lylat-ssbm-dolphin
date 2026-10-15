@@ -197,13 +197,6 @@
    "Tags": ""
   },
   {
-   "InjectionAddress": "8021AAE4",
-   "Name": "Required: General Codes",
-   "Codetype": "04",
-   "Annotation": "",
-   "Tags": ""
-  },
-  {
    "InjectionAddress": "8025B8BC",
    "Name": "Required: General Codes",
    "Codetype": "04",
@@ -253,31 +246,66 @@
    "Tags": ""
   },
   {
+   "InjectionAddress": "800D65EC",
+   "Name": "Required: General Codes",
+   "Codetype": "Auto",
+   "Annotation": "External/UCF 0.84/UCF/UCF DBOOC SquatRv Fix.asm",
+   "Tags": "[affects-gameplay]"
+  },
+  {
    "InjectionAddress": "800C9A44",
    "Name": "Required: General Codes",
    "Codetype": "Auto",
-   "Annotation": "External/UCF 0.8/Logic/UCF DB.asm",
+   "Annotation": "External/UCF 0.84/UCF/UCF Dashback.asm",
+   "Tags": "[affects-gameplay]"
+  },
+  {
+   "InjectionAddress": "8006B460",
+   "Name": "Required: General Codes",
+   "Codetype": "Auto",
+   "Annotation": "External/UCF 0.84/UCF/UCF Pad Buffer + 1.0 Cardinals.asm",
+   "Tags": "[affects-gameplay]"
+  },
+  {
+   "InjectionAddress": "8008E54C",
+   "Name": "Required: General Codes",
+   "Codetype": "Auto",
+   "Annotation": "External/UCF 0.84/UCF/UCF SDI.asm",
+   "Tags": "[affects-gameplay]"
+  },
+  {
+   "InjectionAddress": "8009A0B8",
+   "Name": "Required: General Codes",
+   "Codetype": "Auto",
+   "Annotation": "External/UCF 0.84/UCF/UCF Shield Drop Extended.asm",
    "Tags": "[affects-gameplay]"
   },
   {
    "InjectionAddress": "800998A4",
    "Name": "Required: General Codes",
    "Codetype": "Auto",
-   "Annotation": "External/UCF 0.8/Logic/UCF SD.asm",
+   "Annotation": "External/UCF 0.84/UCF/UCF Shield Drop.asm",
+   "Tags": "[affects-gameplay]"
+  },
+  {
+   "InjectionAddress": "80093294",
+   "Name": "Required: General Codes",
+   "Codetype": "Auto",
+   "Annotation": "External/UCF 0.84/UCF/UCF Shield SDI.asm",
    "Tags": "[affects-gameplay]"
   },
   {
    "InjectionAddress": "800908F4",
    "Name": "Required: General Codes",
    "Codetype": "Auto",
-   "Annotation": "External/UCF 0.8/Logic/UCF Tumble.asm",
+   "Annotation": "External/UCF 0.84/UCF/UCF Tumble.asm",
    "Tags": "[affects-gameplay]"
   },
   {
    "InjectionAddress": "802662D0",
    "Name": "Required: General Codes",
    "Codetype": "Auto",
-   "Annotation": "External/UCF 0.8/Indicator/UCF Text.asm",
+   "Annotation": "External/UCF 0.84/Indicator/UCF Text.asm",
    "Tags": ""
   },
   {
@@ -435,7 +463,7 @@
    "Tags": ""
   },
   {
-   "InjectionAddress": "8006B0DC",
+   "InjectionAddress": "8006B0E0",
    "Name": "Required: Slippi Recording",
    "Codetype": "Auto",
    "Annotation": "Recording/SendGamePreFrame.asm",
@@ -463,6 +491,34 @@
    "Tags": ""
   },
   {
+   "InjectionAddress": "80211BF8",
+   "Name": "Required: Slippi Recording",
+   "Codetype": "Auto",
+   "Annotation": "Recording/Stages/SendDreamlandInfo.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "801CC998",
+   "Name": "Required: Slippi Recording",
+   "Codetype": "Auto",
+   "Annotation": "Recording/Stages/SendFountainInfo.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "801D4FD8",
+   "Name": "Required: Slippi Recording",
+   "Codetype": "Auto",
+   "Annotation": "Recording/Stages/SendStadiumInfo.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "801A4CB4",
+   "Name": "Required: Slippi Recording",
+   "Codetype": "Auto",
+   "Annotation": "Common/AllocSceneBuffer.asm",
+   "Tags": ""
+  },
+  {
    "InjectionAddress": "800055F8",
    "Name": "Required: Slippi Recording",
    "Codetype": "Auto",
@@ -474,55 +530,6 @@
    "Name": "Required: Slippi Recording",
    "Codetype": "Auto",
    "Annotation": "Common/IncrementFrameIndex.asm",
-   "Tags": ""
-  },
-  {
-   "InjectionAddress": "801D460C",
-   "Name": "Required: Slippi Recording",
-   "Codetype": "Auto",
-   "Annotation": "Common/Preload Stadium Transformations/Core/GetPreloadedTransition.asm",
-   "Tags": "[affects-gameplay]"
-  },
-  {
-   "InjectionAddress": "801D14C8",
-   "Name": "Required: Slippi Recording",
-   "Codetype": "Auto",
-   "Annotation": "Common/Preload Stadium Transformations/Core/Init isLoaded Bool.asm",
-   "Tags": "[affects-gameplay]"
-  },
-  {
-   "InjectionAddress": "801D45EC",
-   "Name": "Required: Slippi Recording",
-   "Codetype": "Auto",
-   "Annotation": "Common/Preload Stadium Transformations/Core/Load Transformation.asm",
-   "Tags": "[affects-gameplay]"
-  },
-  {
-   "InjectionAddress": "801D4F14",
-   "Name": "Required: Slippi Recording",
-   "Codetype": "Auto",
-   "Annotation": "Common/Preload Stadium Transformations/Core/Reset isLoaded.asm",
-   "Tags": "[affects-gameplay]"
-  },
-  {
-   "InjectionAddress": "801D4610",
-   "Name": "Required: Slippi Recording",
-   "Codetype": "Auto",
-   "Annotation": "Common/Preload Stadium Transformations/Core/SkipNormalDecision1.asm",
-   "Tags": "[affects-gameplay]"
-  },
-  {
-   "InjectionAddress": "801D4724",
-   "Name": "Required: Slippi Recording",
-   "Codetype": "Auto",
-   "Annotation": "Common/Preload Stadium Transformations/Core/SkipNormalDecision2.asm",
-   "Tags": "[affects-gameplay]"
-  },
-  {
-   "InjectionAddress": "804DEC18",
-   "Name": "Required: Slippi Recording",
-   "Codetype": "Auto",
-   "Annotation": "Common/Preload Stadium Transformations/Toggle/PsPreloadToggleEnable.asm",
    "Tags": ""
   },
   {
@@ -596,6 +603,13 @@
    "Tags": ""
   },
   {
+   "InjectionAddress": "802F70C4",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Core/LGLExceededGameEnd.asm",
+   "Tags": ""
+  },
+  {
    "InjectionAddress": "801A5014",
    "Name": "Required: Slippi Online",
    "Codetype": "Auto",
@@ -649,13 +663,6 @@
    "Name": "Required: Slippi Online",
    "Codetype": "Auto",
    "Annotation": "Online/Core/TriggerSendInput.asm",
-   "Tags": ""
-  },
-  {
-   "InjectionAddress": "801A4CB4",
-   "Name": "Required: Slippi Online",
-   "Codetype": "Auto",
-   "Annotation": "Online/Core/EXIFileLoad/AllocBuffer.asm",
    "Tags": ""
   },
   {
@@ -729,11 +736,67 @@
    "Tags": ""
   },
   {
-   "InjectionAddress": "801D4578",
+   "InjectionAddress": "8021AAE4",
    "Name": "Required: Slippi Online",
    "Codetype": "Auto",
-   "Annotation": "Online/Core/PreventFileAlarms/FreezeStadium.asm",
+   "Annotation": "Online/Core/Hacks/FD/DesyncProofBGTransformations.asm",
    "Tags": "[affects-gameplay]"
+  },
+  {
+   "InjectionAddress": "801D2D38",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Core/Hacks/Stadium/ChangeJumbotronText.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "801C65C8",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Core/Hacks/Stadium/CustomZeroBuffer.asm",
+   "Tags": "[affects-gameplay]"
+  },
+  {
+   "InjectionAddress": "801D4760",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Core/Hacks/Stadium/GrPsxIsValid.asm",
+   "Tags": "[affects-gameplay]"
+  },
+  {
+   "InjectionAddress": "801D457C",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Core/Hacks/Stadium/IngameCheckIfFrozen.asm",
+   "Tags": "[affects-gameplay]"
+  },
+  {
+   "InjectionAddress": "800165AC",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Core/Hacks/Stadium/StadiumFileLoad.asm",
+   "Tags": "[affects-gameplay]"
+  },
+  {
+   "InjectionAddress": "8038E910",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Core/Music/StartSong.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "800236EC",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Core/Music/Stop.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "800249F0",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Core/Music/VolumeChange.asm",
+   "Tags": ""
   },
   {
    "InjectionAddress": "80023FFC",
@@ -824,13 +887,6 @@
    "Name": "Required: Slippi Online",
    "Codetype": "Auto",
    "Annotation": "Online/Menus/CSS/IncreaseTextHeap.asm",
-   "Tags": ""
-  },
-  {
-   "InjectionAddress": "802652F0",
-   "Name": "Required: Slippi Online",
-   "Codetype": "Auto",
-   "Annotation": "Online/Menus/CSS/InitSheikSelector.asm",
    "Tags": ""
   },
   {
@@ -1093,6 +1149,27 @@
    "Tags": ""
   },
   {
+   "InjectionAddress": "80179378",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Menus/ResultsScreen/ControlAllPanels.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "8017900C",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Menus/ResultsScreen/GrayPanelsForRemotePlayers.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "8017A890",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Menus/ResultsScreen/MoveScaleTable.asm",
+   "Tags": ""
+  },
+  {
    "InjectionAddress": "8025B8A4",
    "Name": "Required: Slippi Online",
    "Codetype": "Auto",
@@ -1104,6 +1181,48 @@
    "Name": "Required: Slippi Online",
    "Codetype": "Auto",
    "Annotation": "Online/Menus/SSS/ExitSSSUponStageSelect.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "80259E90",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Menus/SSS/FrozenStadiumToggle/CheckForFrozenOnStageName.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "80259E34",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Menus/SSS/FrozenStadiumToggle/CheckForToggledOnStageName.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "8025A530",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Menus/SSS/FrozenStadiumToggle/CursorOnHoverStadium.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "80259FB4",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Menus/SSS/FrozenStadiumToggle/IncMaxNames.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "8025AC6C",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Menus/SSS/FrozenStadiumToggle/StageSelectTextProc.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "80259FAC",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Menus/SSS/FrozenStadiumToggle/StoreNameId.asm",
    "Tags": ""
   },
   {
@@ -1300,6 +1419,13 @@
    "Name": "Required: Slippi Online",
    "Codetype": "Auto",
    "Annotation": "Online/Static/SaveState.asm",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "8000568C",
+   "Name": "Required: Slippi Online",
+   "Codetype": "Auto",
+   "Annotation": "Online/Static/StaticData.asm",
    "Tags": ""
   },
   {
@@ -1888,6 +2014,13 @@
    "Name": "Recommended: Lagless FoD",
    "Codetype": "04",
    "Annotation": "",
+   "Tags": ""
+  },
+  {
+   "InjectionAddress": "8021AAE0",
+   "Name": "Optional: Freeze Final Destination Background",
+   "Codetype": "Auto",
+   "Annotation": "External/FreezeFDSlippi/FreezeFDSlippi.asm",
    "Tags": ""
   },
   {

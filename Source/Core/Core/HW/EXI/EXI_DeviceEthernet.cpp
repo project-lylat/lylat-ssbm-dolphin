@@ -50,12 +50,11 @@ CEXIETHERNET::CEXIETHERNET(Core::System& system, BBADeviceType type) : IEXIDevic
     m_network_interface = std::make_unique<TAPNetworkInterface>(this);
     INFO_LOG_FMT(SP1, "Created TAP physical network interface.");
     break;
-#if defined(__APPLE__)
   case BBADeviceType::TAPSERVER:
-    m_network_interface = std::make_unique<TAPServerNetworkInterface>(this);
+    m_network_interface = std::make_unique<TAPServerNetworkInterface>(
+        this, Config::Get(Config::MAIN_BBA_TAPSERVER_DESTINATION));
     INFO_LOG_FMT(SP1, "Created tapserver physical network interface.");
     break;
-#endif
   case BBADeviceType::BuiltIn:
     m_network_interface = std::make_unique<BuiltInBBAInterface>(
         this, Config::Get(Config::MAIN_BBA_BUILTIN_DNS), Config::Get(Config::MAIN_BBA_BUILTIN_IP));
@@ -143,9 +142,7 @@ void CEXIETHERNET::ImmWrite(u32 data, u32 size)
     if (transfer.address == BBA_IOB && transfer.region == transfer.MX)
     {
       ERROR_LOG_FMT(SP1,
-                    "Usage of BBA_IOB indicates that the rx packet descriptor has been corrupted. "
-                    "Killing Dolphin...");
-      std::exit(0);
+                    "Usage of BBA_IOB indicates that the rx packet descriptor has been corrupted.");
     }
 
     // transfer has been setup
@@ -234,7 +231,7 @@ void CEXIETHERNET::DMAWrite(u32 addr, u32 size)
       transfer.address == BBA_WRTXFIFOD)
   {
     auto& memory = m_system.GetMemory();
-    DirectFIFOWrite(memory.GetPointer(addr), size);
+    DirectFIFOWrite(memory.GetPointerForRange(addr, size), size);
   }
   else
   {
@@ -448,7 +445,7 @@ void CEXIETHERNET::SendFromDirectFIFO()
   const u8* frame = tx_fifo.get();
   const u16 size = Common::BitCastPtr<u16>(&mBbaMem[BBA_TXFIFOCNT]);
   if (m_network_interface->SendFrame(frame, size))
-    PowerPC::debug_interface.NetworkLogger()->LogBBA(frame, size);
+    m_system.GetPowerPC().GetDebugInterface().NetworkLogger()->LogBBA(frame, size);
 }
 
 void CEXIETHERNET::SendFromPacketBuffer()
@@ -561,7 +558,8 @@ bool CEXIETHERNET::RecvHandlePacket()
   INFO_LOG_FMT(SP1, "{:x} {:x} {:x} {:x}", page_ptr(BBA_BP), page_ptr(BBA_RRP), page_ptr(BBA_RWP),
                page_ptr(BBA_RHBP));
 #endif
-  PowerPC::debug_interface.NetworkLogger()->LogBBA(mRecvBuffer.get(), mRecvBufferLength);
+  m_system.GetPowerPC().GetDebugInterface().NetworkLogger()->LogBBA(mRecvBuffer.get(),
+                                                                    mRecvBufferLength);
   write_ptr = &mBbaMem[page_ptr(BBA_RWP) << 8];
 
   descriptor = (Descriptor*)write_ptr;

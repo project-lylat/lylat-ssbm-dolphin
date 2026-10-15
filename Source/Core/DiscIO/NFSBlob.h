@@ -38,13 +38,14 @@ struct NFSHeader
 };
 static_assert(sizeof(NFSHeader) == 0x200);
 
-class NFSFileReader : public BlobReader
+class NFSFileReader final : public BlobReader
 {
 public:
   static std::unique_ptr<NFSFileReader> Create(File::IOFile first_file,
                                                const std::string& directory_path);
 
   BlobType GetBlobType() const override { return BlobType::NFS; }
+  std::unique_ptr<BlobReader> CopyReader() const override;
 
   u64 GetRawSize() const override;
   u64 GetDataSize() const override;
@@ -72,7 +73,7 @@ private:
   NFSFileReader(std::vector<NFSLBARange> lba_ranges, std::vector<File::IOFile> files, Key key,
                 u64 raw_size);
 
-  u64 ToPhysicalBlockIndex(u64 logical_block_index);
+  u64 ToPhysicalBlockIndex(u64 logical_block_index) const;
   bool ReadEncryptedBlock(u64 physical_block_index);
   void DecryptBlock(u64 logical_block_index);
   bool ReadAndDecryptBlock(u64 logical_block_index);
@@ -86,6 +87,7 @@ private:
   std::unique_ptr<Common::AES::Context> m_aes_context;
   u64 m_raw_size;
   u64 m_data_size;
+  Key m_key;
 };
 
 }  // namespace DiscIO

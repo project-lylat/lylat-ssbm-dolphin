@@ -25,14 +25,16 @@ public:
 
   static TPipelineFunction GetFunction(VertexComponentFormat type, ColorFormat format);
 
+  // It is important to synchronize colIndex, or else the wrong color array will be used
+  static TPipelineFunction GetDummyFunction();
+
 private:
   template <typename T, auto last_member>
   using EnumMap = typename Common::EnumMap<T, last_member>;
 
   using SizeTable = EnumMap<EnumMap<u32, ColorFormat::RGBA8888>, VertexComponentFormat::Index16>;
 
-  static constexpr SizeTable s_table_size = []() consteval
-  {
+  static constexpr SizeTable s_table_size = []() consteval {
     SizeTable table{};
 
     using VCF = VertexComponentFormat;
@@ -42,6 +44,5 @@ private:
     table[VCF::Index16] = {2u, 2u, 2u, 2u, 2u, 2u};
 
     return table;
-  }
-  ();
+  }();
 };

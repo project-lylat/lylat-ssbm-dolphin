@@ -10,7 +10,11 @@
 
 #include "Common/CommonTypes.h"
 
+class CheatCodeEditor;
 class CheatWarningWidget;
+#ifdef USE_RETRO_ACHIEVEMENTS
+class HardcoreWarningWidget;
+#endif  // USE_RETRO_ACHIEVEMENTS
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
@@ -30,8 +34,13 @@ public:
                            bool restart_required = true);
   ~GeckoCodeWidget() override;
 
+  void ChangeGame(std::string game_id, std::string gametdb_id, u16 game_revision);
+
 signals:
   void OpenGeneralSettings();
+#ifdef USE_RETRO_ACHIEVEMENTS
+  void OpenAchievementSettings();
+#endif  // USE_RETRO_ACHIEVEMENTS
 
 private:
   void OnSelectionChanged();
@@ -45,14 +54,20 @@ private:
   void AddCode();
   void EditCode();
   void RemoveCode();
+  void LoadCodes();
   void SaveCodes();
   void SortAlphabetically();
+  void SortEnabledCodesFirst();
+  void SortDisabledCodesFirst();
 
   std::string m_game_id;
   std::string m_gametdb_id;
   u16 m_game_revision;
 
   CheatWarningWidget* m_warning;
+#ifdef USE_RETRO_ACHIEVEMENTS
+  HardcoreWarningWidget* m_hc_warning;
+#endif  // USE_RETRO_ACHIEVEMENTS
   QListWidget* m_code_list;
   QLabel* m_name_label;
   QLabel* m_creator_label;
@@ -61,6 +76,7 @@ private:
   QPushButton* m_add_code;
   QPushButton* m_edit_code;
   QPushButton* m_remove_code;
+  CheatCodeEditor* m_cheat_code_editor;
   std::vector<Gecko::GeckoCode> m_gecko_codes;
   bool m_restart_required;
 };

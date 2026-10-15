@@ -2,12 +2,14 @@
 #include <string>
 #include <vector>
 #include "Common/Common.h"
-#include "Common/ENetUtil.h"
+#include "Common/ENet.h"
 #include "Common/Logging/Log.h"
 #include "Common/StringUtil.h"
 #include "Common/Version.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
+#include "SlippiRustExtensions.h"
+
 
 #if defined __linux__ && HAVE_ALSA
 #elif defined __APPLE__
@@ -28,11 +30,13 @@ std::string MmMessageType::CREATE_TICKET = "create-ticket";
 std::string MmMessageType::CREATE_TICKET_RESP = "create-ticket-resp";
 std::string MmMessageType::GET_TICKET_RESP = "get-ticket-resp";
 
-SlippiMatchmaking::SlippiMatchmaking(SlippiUser* user)
+SlippiMatchmaking::SlippiMatchmaking(uintptr_t rs_exi_device_ptr, SlippiUser* user)
 {
   m_user = user;
   m_state = ProcessState::IDLE;
   m_error_msg = "";
+
+  slprs_exi_device_ptr = rs_exi_device_ptr;
 
   m_client = nullptr;
   m_server = nullptr;
@@ -90,7 +94,8 @@ std::unique_ptr<SlippiNetplayClient> SlippiMatchmaking::GetNetplayClient()
 bool SlippiMatchmaking::IsFixedRulesMode(SlippiMatchmaking::OnlinePlayMode mode)
 {
   return mode == SlippiMatchmaking::OnlinePlayMode::UNRANKED ||
-         mode == SlippiMatchmaking::OnlinePlayMode::RANKED;
+         mode == SlippiMatchmaking::OnlinePlayMode::RANKED ||
+         mode == SlippiMatchmaking::OnlinePlayMode::PARTY;
 }
 
 void SlippiMatchmaking::sendMessage(json msg)
@@ -281,6 +286,33 @@ void SlippiMatchmaking::startMatchmaking()
   m_client = nullptr;
 
   int retry_count = 0;
+
+  // If IsFixedRules mode, don't allow ISO's that are known to desync
+  if (IsFixedRulesMode(m_search_settings.mode))
+  {
+    auto check = slprs_get_iso_md5_check(slprs_exi_device_ptr);
+    while (check.result == 0)
+    {
+      Common::SleepCurrentThread(500);
+      retry_count++;
+      if (retry_count > 10)
+      {
+        m_state = ProcessState::ERROR_ENCOUNTERED;
+        m_error_msg = "Could not validate ISO";
+        return;
+      }
+      check = slprs_get_iso_md5_check(slprs_exi_device_ptr);
+    }
+
+    if (check.result == 2)
+    {
+      m_state = ProcessState::ERROR_ENCOUNTERED;
+      m_error_msg = "Cannot queue for this mode with a modded ISO known to desync";
+      return;
+    }
+  }
+
+  retry_count = 0;
   auto user_info = m_user->GetUserInfo();
   while (m_client == nullptr && retry_count < 15)
   {
@@ -347,7 +379,7 @@ void SlippiMatchmaking::startMatchmaking()
     }
 
     net_event.peer->data = &user_info.display_name;
-    m_client->intercept = ENetUtil::InterceptCallback;
+    m_client->intercept = Common::ENet::InterceptCallback;
     is_mm_connected = true;
     ERROR_LOG_FMT(SLIPPI_ONLINE, "[Matchmaking] Connected to mm server...");
   }
@@ -540,6 +572,7 @@ void SlippiMatchmaking::handleMatchmaking()
       player_info.display_name = el.value("displayName", "");
       player_info.connect_code = el.value("connectCode", "");
       player_info.port = el.value("port", 0);
+      player_info.is_bot = el.value("isBot", false);
       if (el["chatMessages"].is_array())
       {
         player_info.chat_messages = el.value("chatMessages", m_user->GetDefaultChatMessages());
@@ -551,6 +584,15 @@ void SlippiMatchmaking::handleMatchmaking()
       else
       {
         player_info.chat_messages = m_user->GetDefaultChatMessages();
+      }
+
+      json rank_el = el["rank"];
+      if (rank_el.is_object())
+      {
+        player_info.ranked_rating = rank_el.value("rating", 0.0);
+        player_info.ranked_update_count = rank_el.value("updateCount", 0);
+        player_info.ranked_global_placement = rank_el.value("globalPlacement", 0);
+        player_info.ranked_regional_placement = rank_el.value("regionalPlacement", 0);
       }
 
       m_player_info.push_back(player_info);
@@ -627,9 +669,17 @@ void SlippiMatchmaking::handleMatchmaking()
   m_mm_result.id = match_id;
   m_mm_result.players = m_player_info;
   m_mm_result.stages = m_allowed_stages;
+  m_mm_result.items = get_resp.value<u32>("items", 0);
 
   // Disconnect and destroy enet client to mm server
   terminateMmConnection();
+
+  // If ranked, report to backend that we are attempting to connect to this match
+  if (match_id.find("mode.ranked") != std::string::npos)
+  {
+    slprs_exi_device_report_match_status(slprs_exi_device_ptr, match_id.c_str(), "connecting",
+                                         true);
+  }
 
   m_state = ProcessState::OPPONENT_CONNECTING;
   ERROR_LOG_FMT(SLIPPI_ONLINE, "[Matchmaking] Opponent found. is_decider: {}",
@@ -658,6 +708,125 @@ std::string SlippiMatchmaking::GetPlayerName(u8 port)
     return "";
   }
   return m_player_info[port].display_name;
+}
+
+// This is kind of duplicate code from what exists in rust. Maybe eventually it should be remove
+// and exist only on the rust side
+SlippiMatchmaking::SlippiRank SlippiMatchmaking::GetPlayerRank(u8 port)
+{
+  if (port >= m_player_info.size())
+  {
+    return SlippiRank::Unranked;
+  }
+
+  auto info = m_player_info[port];
+
+  float rating = info.ranked_rating;
+  int update_count = info.ranked_update_count;
+  int global = info.ranked_global_placement;
+  int regional = info.ranked_regional_placement;
+
+  if (update_count < 5)
+  {
+    return SlippiRank::Unranked;
+  }
+
+  if (rating <= 765.42f)
+  {
+    return SlippiRank::Bronze1;
+  }
+
+  if (rating > 765.43f && rating <= 913.71f)
+  {
+    return SlippiRank::Bronze2;
+  }
+
+  if (rating > 913.72f && rating <= 1054.86f)
+  {
+    return SlippiRank::Bronze3;
+  }
+
+  if (rating > 1054.87f && rating <= 1188.87f)
+  {
+    return SlippiRank::Silver1;
+  }
+
+  if (rating > 1188.88f && rating <= 1315.74f)
+  {
+    return SlippiRank::Silver2;
+  }
+
+  if (rating > 1315.75f && rating <= 1435.47f)
+  {
+    return SlippiRank::Silver3;
+  }
+
+  if (rating > 1435.48f && rating <= 1548.06f)
+  {
+    return SlippiRank::Gold1;
+  }
+
+  if (rating > 1548.07f && rating <= 1653.51f)
+  {
+    return SlippiRank::Gold2;
+  }
+
+  if (rating > 1653.52f && rating <= 1751.82f)
+  {
+    return SlippiRank::Gold3;
+  }
+
+  if (rating > 1751.83f && rating <= 1842.99f)
+  {
+    return SlippiRank::Platinum1;
+  }
+
+  if (rating > 1843.0f && rating <= 1927.02f)
+  {
+    return SlippiRank::Platinum2;
+  }
+
+  if (rating > 1927.03f && rating <= 2003.91f)
+  {
+    return SlippiRank::Platinum3;
+  }
+
+  if (rating > 2003.92f && rating <= 2073.66f)
+  {
+    return SlippiRank::Diamond1;
+  }
+
+  if (rating > 2073.67f && rating <= 2136.27f)
+  {
+    return SlippiRank::Diamond2;
+  }
+
+  if (rating > 2136.28f && rating <= 2191.74f)
+  {
+    return SlippiRank::Diamond3;
+  }
+
+  if (rating >= 2191.75f && (global > 0 || regional > 0))
+  {
+    return SlippiRank::Grandmaster;
+  }
+
+  if (rating > 2191.75f && rating <= 2274.99f)
+  {
+    return SlippiRank::Master1;
+  }
+
+  if (rating > 2275.0f && rating <= 2350.0f)
+  {
+    return SlippiRank::Master2;
+  }
+
+  if (rating > 2350.0f)
+  {
+    return SlippiRank::Master3;
+  }
+
+  return SlippiRank::Unranked;
 }
 
 SlippiMatchmaking::MatchmakeResult SlippiMatchmaking::GetMatchmakeResult()

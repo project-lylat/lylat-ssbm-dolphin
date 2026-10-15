@@ -12,6 +12,7 @@
 #include "Core/Core.h"
 
 #include "InputCommon/DynamicInputTextures/DITConfiguration.h"
+#include "InputCommon/ImageOperations.h"
 #include "VideoCommon/HiresTextures.h"
 #include "VideoCommon/TextureCacheBase.h"
 
@@ -39,16 +40,37 @@ void DynamicInputTextureManager::Load()
   }
 }
 
-void DynamicInputTextureManager::GenerateTextures(const IniFile& file,
+void DynamicInputTextureManager::GenerateTextures(const Common::IniFile& file,
                                                   const std::vector<std::string>& controller_names)
 {
-  bool any_dirty = false;
+  DynamicInputTextures::OutputDetails output;
   for (const auto& configuration : m_configuration)
   {
-    any_dirty |= configuration.GenerateTextures(file, controller_names);
+    configuration.GenerateTextures(file, controller_names, &output);
   }
 
-  if (any_dirty && g_texture_cache && Core::GetState() != Core::State::Starting)
-    g_texture_cache->ForceReloadTextures();
+  const std::string& game_id = SConfig::GetInstance().GetGameID();
+  for (const auto& [generated_folder_name, images] : output)
+  {
+    const auto hi_res_folder = File::GetUserPath(D_HIRESTEXTURES_IDX) + generated_folder_name;
+
+    if (!File::IsDirectory(hi_res_folder))
+    {
+      File::CreateDir(hi_res_folder);
+    }
+
+    const auto game_id_folder = hi_res_folder + DIR_SEP + "gameids";
+    if (!File::IsDirectory(game_id_folder))
+    {
+      File::CreateDir(game_id_folder);
+    }
+
+    File::CreateEmptyFile(game_id_folder + DIR_SEP + game_id + ".txt");
+
+    for (const auto& [image_name, image] : images)
+    {
+      WriteImage(hi_res_folder + DIR_SEP + image_name, image);
+    }
+  }
 }
 }  // namespace InputCommon

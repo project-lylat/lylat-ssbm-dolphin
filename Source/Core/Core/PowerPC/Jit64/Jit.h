@@ -34,6 +34,7 @@
 #include "Core/PowerPC/JitCommon/JitBase.h"
 #include "Core/PowerPC/JitCommon/JitCache.h"
 
+class HostDisassembler;
 namespace PPCAnalyst
 {
 struct CodeBlock;
@@ -43,7 +44,11 @@ struct CodeOp;
 class Jit64 : public JitBase, public QuantizedMemoryRoutines
 {
 public:
-  Jit64();
+  explicit Jit64(Core::System& system);
+  Jit64(const Jit64&) = delete;
+  Jit64(Jit64&&) = delete;
+  Jit64& operator=(const Jit64&) = delete;
+  Jit64& operator=(Jit64&&) = delete;
   ~Jit64() override;
 
   void Init() override;
@@ -60,6 +65,12 @@ public:
   void Jit(u32 em_address) override;
   void Jit(u32 em_address, bool clear_cache_and_retry_on_failure);
   bool DoJit(u32 em_address, JitBlock* b, u32 nextPC);
+
+  void EraseSingleBlock(const JitBlock& block) override;
+  std::vector<MemoryStats> GetMemoryStats() const override;
+
+  std::size_t DisassembleNearCode(const JitBlock& block, std::ostream& stream) const override;
+  std::size_t DisassembleFarCode(const JitBlock& block, std::ostream& stream) const override;
 
   // Finds a free memory region and sets the near and far code emitters to point at that region.
   // Returns false if no free memory region can be found for either of the two.
@@ -83,6 +94,8 @@ public:
 
   // Utilities for use by opcodes
 
+  void EmitUpdateMembase();
+  void MSRUpdated(const Gen::OpArg& msr, Gen::X64Reg scratch_reg);
   void FakeBLCall(u32 after);
   void WriteExit(u32 destination, bool bl = false, u32 after = 0);
   void JustWriteExit(u32 destination, bool bl, u32 after);
@@ -92,6 +105,12 @@ public:
   void WriteExternalExceptionExit();
   void WriteRfiExitDestInRSCRATCH();
   void WriteIdleExit(u32 destination);
+  template <bool condition>
+  void WriteBranchWatch(u32 origin, u32 destination, UGeckoInstruction inst, Gen::X64Reg reg_a,
+                        Gen::X64Reg reg_b, BitSet32 caller_save);
+  void WriteBranchWatchDestInRSCRATCH(u32 origin, UGeckoInstruction inst, Gen::X64Reg reg_a,
+                                      Gen::X64Reg reg_b, BitSet32 caller_save);
+
   bool Cleanup();
 
   void GenerateConstantOverflow(bool overflow);
@@ -254,7 +273,12 @@ private:
 
   bool HandleFunctionHooking(u32 address);
 
+  void FreeRanges();
   void ResetFreeMemoryRanges();
+
+  void LogGeneratedCode() const;
+
+  static void ImHere(Jit64& jit);
 
   JitBlockCache blocks{*this};
   TrampolineCache trampolines{*this};
@@ -266,7 +290,9 @@ private:
 
   HyoutaUtilities::RangeSizeSet<u8*> m_free_ranges_near;
   HyoutaUtilities::RangeSizeSet<u8*> m_free_ranges_far;
-};
 
-void LogGeneratedX86(size_t size, const PPCAnalyst::CodeBuffer& code_buffer, const u8* normalEntry,
-                     const JitBlock* b);
+  const bool m_im_here_debug = false;
+  const bool m_im_here_log = false;
+  std::map<u32, int> m_been_here;
+  std::unique_ptr<HostDisassembler> m_disassembler;
+};

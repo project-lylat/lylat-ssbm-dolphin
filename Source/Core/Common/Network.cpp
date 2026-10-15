@@ -4,6 +4,7 @@
 #include "Common/Network.h"
 
 #include <algorithm>
+#include <bit>
 #include <string_view>
 #include <vector>
 
@@ -19,6 +20,7 @@
 #include <fmt/format.h>
 
 #include "Common/BitUtils.h"
+#include "Common/CommonFuncs.h"
 #include "Common/Random.h"
 #include "Common/StringUtil.h"
 
@@ -34,10 +36,10 @@ MACAddress GenerateMacAddress(const MACConsumer type)
   switch (type)
   {
   case MACConsumer::BBA:
-    std::copy(oui_bba.begin(), oui_bba.end(), mac.begin());
+    std::ranges::copy(oui_bba, mac.begin());
     break;
   case MACConsumer::IOS:
-    std::copy(oui_ios.begin(), oui_ios.end(), mac.begin());
+    std::ranges::copy(oui_ios, mac.begin());
     break;
   }
 
@@ -291,7 +293,7 @@ u16 ComputeNetworkChecksum(const void* data, u16 length, u32 initial_value)
 {
   u32 checksum = initial_value;
   std::size_t index = 0;
-  const std::string_view data_view{reinterpret_cast<const char*>(data), length};
+  const std::string_view data_view{static_cast<const char*>(data), length};
   for (u8 b : data_view)
   {
     const bool is_hi = index++ % 2 == 0;
@@ -306,8 +308,8 @@ u16 ComputeNetworkChecksum(const void* data, u16 length, u32 initial_value)
 u16 ComputeTCPNetworkChecksum(const IPAddress& from, const IPAddress& to, const void* data,
                               u16 length, u8 protocol)
 {
-  const u32 source_addr = ntohl(Common::BitCast<u32>(from));
-  const u32 destination_addr = ntohl(Common::BitCast<u32>(to));
+  const u32 source_addr = ntohl(std::bit_cast<u32>(from));
+  const u32 destination_addr = ntohl(std::bit_cast<u32>(to));
   const u32 initial_value = (source_addr >> 16) + (source_addr & 0xFFFF) +
                             (destination_addr >> 16) + (destination_addr & 0xFFFF) + protocol +
                             length;
@@ -551,23 +553,14 @@ const char* DecodeNetworkError(s32 error_code)
 {
   thread_local char buffer[1024];
 
-#if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(ANDROID) ||     \
-    defined(__APPLE__)
-#define IS_BSD_STRERROR
-#endif
-
 #ifdef _WIN32
   FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS |
                      FORMAT_MESSAGE_MAX_WIDTH_MASK,
                  nullptr, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buffer,
                  sizeof(buffer), nullptr);
   return buffer;
-#elif defined(IS_BSD_STRERROR) ||                                                                  \
-    ((_POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600) && !_GNU_SOURCE)
-  strerror_r(error_code, buffer, sizeof(buffer));
-  return buffer;
 #else
-  return strerror_r(error_code, buffer, sizeof(buffer));
+  return Common::StrErrorWrapper(error_code, buffer, sizeof(buffer));
 #endif
 }
 

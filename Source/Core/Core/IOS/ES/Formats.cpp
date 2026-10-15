@@ -10,6 +10,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -21,6 +22,7 @@
 #include "Common/Crypto/SHA1.h"
 #include "Common/Logging/Log.h"
 #include "Common/NandPaths.h"
+#include "Common/Projection.h"
 #include "Common/StringUtil.h"
 #include "Common/Swap.h"
 #include "Core/CommonTitles.h"
@@ -71,11 +73,6 @@ bool operator==(const Content& lhs, const Content& rhs)
 {
   auto fields = [](const Content& c) { return std::tie(c.id, c.index, c.type, c.size, c.sha1); };
   return fields(lhs) == fields(rhs);
-}
-
-bool operator!=(const Content& lhs, const Content& rhs)
-{
-  return !operator==(lhs, rhs);
 }
 
 SignedBlobReader::SignedBlobReader(std::vector<u8> bytes) : m_bytes(std::move(bytes))
@@ -302,7 +299,7 @@ std::string TMDReader::GetGameID() const
   std::memcpy(game_id, m_bytes.data() + offsetof(TMDHeader, title_id) + 4, 4);
   std::memcpy(game_id + 4, m_bytes.data() + offsetof(TMDHeader, group_id), 2);
 
-  if (std::all_of(std::begin(game_id), std::end(game_id), Common::IsPrintableCharacter))
+  if (std::ranges::all_of(game_id, Common::IsPrintableCharacter))
     return std::string(game_id, sizeof(game_id));
 
   return fmt::format("{:016x}", GetTitleId());
@@ -509,7 +506,7 @@ HLE::ReturnCode TicketReader::Unpersonalise(HLE::IOSC& iosc)
   using namespace HLE;
   IOSC::Handle public_handle;
   ReturnCode ret =
-      iosc.CreateObject(&public_handle, IOSC::TYPE_PUBLIC_KEY, IOSC::SUBTYPE_ECC233, PID_ES);
+      iosc.CreateObject(&public_handle, IOSC::TYPE_PUBLIC_KEY, IOSC::ObjectSubType::ECC233, PID_ES);
   if (ret != IPC_SUCCESS)
     return ret;
 
@@ -519,7 +516,7 @@ HLE::ReturnCode TicketReader::Unpersonalise(HLE::IOSC& iosc)
     return ret;
 
   IOSC::Handle key_handle;
-  ret = iosc.CreateObject(&key_handle, IOSC::TYPE_SECRET_KEY, IOSC::SUBTYPE_AES128, PID_ES);
+  ret = iosc.CreateObject(&key_handle, IOSC::TYPE_SECRET_KEY, IOSC::ObjectSubType::AES128, PID_ES);
   if (ret != IPC_SUCCESS)
     return ret;
 
@@ -535,7 +532,7 @@ HLE::ReturnCode TicketReader::Unpersonalise(HLE::IOSC& iosc)
                      sizeof(Ticket::title_key), key.data(), PID_ES);
   // Finally, IOS copies the decrypted title key back to the ticket buffer.
   if (ret == IPC_SUCCESS)
-    std::copy(key.cbegin(), key.cend(), ticket_begin + offsetof(Ticket, title_key));
+    std::ranges::copy(key, ticket_begin + offsetof(Ticket, title_key));
 
   return ret;
 }
@@ -554,17 +551,16 @@ struct SharedContentMap::Entry
 };
 
 constexpr char CONTENT_MAP_PATH[] = "/shared1/content.map";
-SharedContentMap::SharedContentMap(std::shared_ptr<HLE::FSDevice> fs)
-    : m_fs_device{fs}, m_fs{fs->GetFS()}
+SharedContentMap::SharedContentMap(HLE::FSCore& fs_core) : m_fs{fs_core.GetFS()}
 {
   static_assert(sizeof(Entry) == 28, "SharedContentMap::Entry has the wrong size");
 
   Entry entry;
   const auto fd =
-      fs->Open(PID_KERNEL, PID_KERNEL, CONTENT_MAP_PATH, HLE::FS::Mode::Read, {}, &m_ticks);
+      fs_core.Open(PID_KERNEL, PID_KERNEL, CONTENT_MAP_PATH, HLE::FS::Mode::Read, {}, &m_ticks);
   if (fd.Get() < 0)
     return;
-  while (fs->Read(fd.Get(), &entry, 1, &m_ticks) == sizeof(entry))
+  while (fs_core.Read(fd.Get(), &entry, 1, &m_ticks) == sizeof(entry))
   {
     m_entries.push_back(entry);
     m_last_id++;
@@ -576,12 +572,11 @@ SharedContentMap::~SharedContentMap() = default;
 std::optional<std::string>
 SharedContentMap::GetFilenameFromSHA1(const std::array<u8, 20>& sha1) const
 {
-  const auto it = std::find_if(m_entries.begin(), m_entries.end(),
-                               [&sha1](const auto& entry) { return entry.sha1 == sha1; });
+  const auto it = std::ranges::find(m_entries, sha1, &Entry::sha1);
   if (it == m_entries.end())
     return {};
 
-  const std::string id_string(it->id.begin(), it->id.end());
+  const std::string_view id_string(reinterpret_cast<const char*>(it->id.data()), it->id.size());
   return fmt::format("/shared1/{}.app", id_string);
 }
 
@@ -597,27 +592,27 @@ std::vector<std::array<u8, 20>> SharedContentMap::GetHashes() const
 
 std::string SharedContentMap::AddSharedContent(const std::array<u8, 20>& sha1)
 {
-  auto filename = GetFilenameFromSHA1(sha1);
-  if (filename)
-    return *filename;
+  if (auto filename = GetFilenameFromSHA1(sha1))
+    return *std::move(filename);
 
-  const std::string id = fmt::format("{:08x}", m_last_id);
-  Entry entry;
-  std::copy(id.cbegin(), id.cend(), entry.id.begin());
+  Entry& entry = m_entries.emplace_back();
+  static_assert(sizeof(m_last_id) == 4,
+                "'m_last_id' must be represented by 8 characters when formatted in hexadecimal.");
+  static_assert(std::tuple_size_v<decltype(entry.id)> == sizeof(m_last_id) * 2,
+                "'entry.id' must be a std::array capable of storing every nibble of 'm_last_id'.");
+  fmt::format_to(entry.id.data(), "{:08x}", m_last_id);
   entry.sha1 = sha1;
-  m_entries.push_back(entry);
 
   WriteEntries();
-  filename = fmt::format("/shared1/{}.app", id);
   m_last_id++;
-  return *filename;
+
+  const std::string_view id_string(reinterpret_cast<const char*>(entry.id.data()), entry.id.size());
+  return fmt::format("/shared1/{}.app", id_string);
 }
 
 bool SharedContentMap::DeleteSharedContent(const std::array<u8, 20>& sha1)
 {
-  m_entries.erase(std::remove_if(m_entries.begin(), m_entries.end(),
-                                 [&sha1](const auto& entry) { return entry.sha1 == sha1; }),
-                  m_entries.end());
+  std::erase_if(m_entries, [&sha1](const auto& entry) { return entry.sha1 == sha1; });
   return WriteEntries();
 }
 
@@ -637,7 +632,7 @@ bool SharedContentMap::WriteEntries() const
          HLE::FS::ResultCode::Success;
 }
 
-static std::pair<u32, u64> ReadUidSysEntry(HLE::FSDevice& fs, u64 fd, u64* ticks)
+static std::pair<u32, u64> ReadUidSysEntry(HLE::FSCore& fs, u64 fd, u64* ticks)
 {
   u64 title_id = 0;
   if (fs.Read(fd, &title_id, 1, ticks) != sizeof(title_id))
@@ -651,15 +646,15 @@ static std::pair<u32, u64> ReadUidSysEntry(HLE::FSDevice& fs, u64 fd, u64* ticks
 }
 
 constexpr char UID_MAP_PATH[] = "/sys/uid.sys";
-UIDSys::UIDSys(std::shared_ptr<HLE::FSDevice> fs) : m_fs_device{fs}, m_fs{fs->GetFS()}
+UIDSys::UIDSys(HLE::FSCore& fs_core) : m_fs{fs_core.GetFS()}
 {
   if (const auto fd =
-          fs->Open(PID_KERNEL, PID_KERNEL, UID_MAP_PATH, HLE::FS::Mode::Read, {}, &m_ticks);
+          fs_core.Open(PID_KERNEL, PID_KERNEL, UID_MAP_PATH, HLE::FS::Mode::Read, {}, &m_ticks);
       fd.Get() >= 0)
   {
     while (true)
     {
-      std::pair<u32, u64> entry = ReadUidSysEntry(*fs, fd.Get(), &m_ticks);
+      std::pair<u32, u64> entry = ReadUidSysEntry(fs_core, fd.Get(), &m_ticks);
       if (!entry.first && !entry.second)
         break;
 
@@ -675,8 +670,7 @@ UIDSys::UIDSys(std::shared_ptr<HLE::FSDevice> fs) : m_fs_device{fs}, m_fs{fs->Ge
 
 u32 UIDSys::GetUIDFromTitle(u64 title_id) const
 {
-  const auto it = std::find_if(m_entries.begin(), m_entries.end(),
-                               [title_id](const auto& entry) { return entry.second == title_id; });
+  const auto it = std::ranges::find(m_entries, title_id, Common::Projection::Value{});
   return (it == m_entries.end()) ? 0 : it->first;
 }
 
@@ -721,9 +715,6 @@ CertReader::CertReader(std::vector<u8>&& bytes) : SignedBlobReader(std::move(byt
   if (!IsSignatureValid())
     return;
 
-  // XXX: in old GCC versions, capturing 'this' does not work for some lambdas. The workaround
-  // is to not use auto for the parameter (even though the type is obvious).
-  // This can be dropped once we require GCC 7.
   using CertStructInfo = std::tuple<SignatureType, PublicKeyType, size_t>;
   static constexpr std::array<CertStructInfo, 4> types{{
       {SignatureType::RSA4096, PublicKeyType::RSA2048, sizeof(CertRSA4096RSA2048)},
@@ -732,7 +723,7 @@ CertReader::CertReader(std::vector<u8>&& bytes) : SignedBlobReader(std::move(byt
       {SignatureType::ECC, PublicKeyType::ECC, sizeof(CertECC)},
   }};
 
-  const auto info = std::find_if(types.cbegin(), types.cend(), [this](const CertStructInfo& entry) {
+  const auto info = std::ranges::find_if(types, [this](const CertStructInfo& entry) {
     return m_bytes.size() >= std::get<2>(entry) && std::get<0>(entry) == GetSignatureType() &&
            std::get<1>(entry) == GetPublicKeyType();
   });

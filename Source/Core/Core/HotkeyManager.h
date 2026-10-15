@@ -32,6 +32,9 @@ enum Hotkey
   HK_CENTER_MOUSE,
   HK_ACTIVATE_CHAT,
   HK_REQUEST_GOLF_CONTROL,
+#ifdef USE_RETRO_ACHIEVEMENTS
+  HK_OPEN_ACHIEVEMENTS,
+#endif  // USE_RETRO_ACHIEVEMENTS
 
   HK_VOLUME_DOWN,
   HK_VOLUME_UP,
@@ -71,6 +74,7 @@ enum Hotkey
   HK_BALANCEBOARD_CONNECT,
   HK_TOGGLE_SD_CARD,
   HK_TOGGLE_USB_KEYBOARD,
+  HK_TOGGLE_WII_SPEAK_MUTE,
 
   HK_NEXT_WIIMOTE_PROFILE_1,
   HK_PREV_WIIMOTE_PROFILE_1,
@@ -186,6 +190,9 @@ enum Hotkey
   HK_GBA_3X,
   HK_GBA_4X,
 
+  HK_SKYLANDERS_PORTAL,
+  HK_INFINITY_BASE,
+
   NUM_HOTKEYS,
 };
 
@@ -218,6 +225,7 @@ enum HotkeyGroup : int
   HKGP_GBA_CORE,
   HKGP_GBA_VOLUME,
   HKGP_GBA_SIZE,
+  HKGP_USB_EMU,
 
   NUM_HOTKEY_GROUPS,
 };
@@ -236,6 +244,7 @@ public:
 
   void GetInput(HotkeyStatus* hk, bool ignore_focus);
   std::string GetName() const override;
+  InputConfig* GetConfig() const override;
   ControllerEmu::ControlGroup* GetHotkeyGroup(HotkeyGroup group) const;
   int FindGroupByID(int id) const;
   int GetIndexForGroup(int group, int id) const;

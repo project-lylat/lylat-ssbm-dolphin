@@ -9,7 +9,7 @@
 
 #include "Common/Debug/MemoryPatches.h"
 #include "Common/Debug/Watches.h"
-#include "Common/DebugInterface.h"
+#include "Core/Debugger/DebugInterface.h"
 #include "Core/NetworkCaptureLogger.h"
 
 namespace Core
@@ -17,6 +17,7 @@ namespace Core
 class CPUThreadGuard;
 class System;
 }  // namespace Core
+class PPCSymbolDB;
 
 void ApplyMemoryPatch(const Core::CPUThreadGuard&, Common::Debug::MemoryPatch& patch,
                       bool store_existing_value = true);
@@ -33,10 +34,10 @@ private:
 
 // wrapper between disasm control and Dolphin debugger
 
-class PPCDebugInterface final : public Common::DebugInterface
+class PPCDebugInterface final : public Core::DebugInterface
 {
 public:
-  explicit PPCDebugInterface(Core::System& system);
+  explicit PPCDebugInterface(Core::System& system, PPCSymbolDB& ppc_symbol_db);
   ~PPCDebugInterface() override;
 
   // Watches
@@ -79,8 +80,8 @@ public:
                                  u32 address) const override;
   bool IsAlive() const override;
   bool IsBreakpoint(u32 address) const override;
-  void SetBreakpoint(u32 address) override;
-  void ClearBreakpoint(u32 address) override;
+  void AddBreakpoint(u32 address) override;
+  void RemoveBreakpoint(u32 address) override;
   void ClearAllBreakpoints() override;
   void ToggleBreakpoint(u32 address) override;
   void ClearAllMemChecks() override;
@@ -99,9 +100,9 @@ public:
   u32 GetPC() const override;
   void SetPC(u32 address) override;
   void Step() override {}
-  void RunToBreakpoint() override;
+  void RunTo(u32 address) override;
   u32 GetColor(const Core::CPUThreadGuard* guard, u32 address) const override;
-  std::string GetDescription(u32 address) const override;
+  std::string_view GetDescription(u32 address) const override;
 
   std::shared_ptr<Core::NetworkCaptureLogger> NetworkLogger();
 
@@ -112,4 +113,5 @@ private:
   PPCPatches m_patches;
   std::shared_ptr<Core::NetworkCaptureLogger> m_network_logger;
   Core::System& m_system;
+  PPCSymbolDB& m_ppc_symbol_db;
 };

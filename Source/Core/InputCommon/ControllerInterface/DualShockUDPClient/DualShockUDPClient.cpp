@@ -23,6 +23,7 @@
 #include "Core/CoreTiming.h"
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 #include "InputCommon/ControllerInterface/DualShockUDPClient/DualShockUDPProto.h"
+#include "SFML/Network/IpAddress.hpp"
 
 namespace ciface::DualShockUDPClient
 {
@@ -128,7 +129,7 @@ private:
   };
 
 public:
-  void UpdateInput() override;
+  Core::DeviceRemoval UpdateInput() override;
 
   Device(std::string name, int index, std::string server_address, u16 server_port, u32 client_uid);
 
@@ -219,7 +220,7 @@ private:
   SteadyClock::time_point m_next_listports_time;
   std::thread m_hotplug_thread;
   Common::Flag m_hotplug_thread_running;
-  std::size_t m_config_change_callback_id;
+  Config::ConfigChangedCallbackID m_config_change_callback_id;
 };
 
 std::unique_ptr<ciface::InputBackend> CreateInputBackend(ControllerInterface* controller_interface)
@@ -263,8 +264,9 @@ void InputBackend::HotplugThreadFunc()
         list_ports.pad_request_count = SERVER_ASKED_PADS;
         list_ports.pad_ids = {0, 1, 2, 3};
         msg.Finish();
-        if (server.m_socket.send(&list_ports, sizeof list_ports, server.m_address, server.m_port) !=
-            sf::Socket::Status::Done)
+        if (server.m_socket.send(&list_ports, sizeof list_ports,
+                                 sf::IpAddress::resolve(server.m_address).value(),
+                                 server.m_port) != sf::Socket::Status::Done)
         {
           ERROR_LOG_FMT(CONTROLLERINTERFACE, "DualShockUDPClient HotplugThreadFunc send failed");
         }
@@ -304,7 +306,7 @@ void InputBackend::HotplugThreadFunc()
 
           Proto::Message<Proto::MessageType::FromServer> msg;
           std::size_t received_bytes;
-          sf::IpAddress sender;
+          std::optional<sf::IpAddress> sender;
           u16 port;
           if (server.m_socket.receive(&msg, sizeof(msg), received_bytes, sender, port) !=
               sf::Socket::Status::Done)
@@ -614,7 +616,7 @@ std::string Device::GetSource() const
   return std::string(DUALSHOCKUDP_SOURCE_NAME);
 }
 
-void Device::UpdateInput()
+Core::DeviceRemoval Device::UpdateInput()
 {
   // Regularly tell the UDP server to feed us controller data
   const auto now = SteadyClock::now();
@@ -627,8 +629,8 @@ void Device::UpdateInput()
     data_req.register_flags = Proto::RegisterFlags::PadID;
     data_req.pad_id_to_register = m_index;
     msg.Finish();
-    if (m_socket.send(&data_req, sizeof(data_req), m_server_address, m_server_port) !=
-        sf::Socket::Status::Done)
+    if (m_socket.send(&data_req, sizeof(data_req), sf::IpAddress::resolve(m_server_address).value(),
+                      m_server_port) != sf::Socket::Status::Done)
     {
       ERROR_LOG_FMT(CONTROLLERINTERFACE, "DualShockUDPClient UpdateInput send failed");
     }
@@ -637,7 +639,7 @@ void Device::UpdateInput()
   // Receive and handle controller data
   Proto::Message<Proto::MessageType::FromServer> msg;
   std::size_t received_bytes;
-  sf::IpAddress sender;
+  std::optional<sf::IpAddress> sender;
   u16 port;
   while (m_socket.receive(&msg, sizeof msg, received_bytes, sender, port) ==
          sf::Socket::Status::Done)
@@ -660,6 +662,8 @@ void Device::UpdateInput()
       m_prev_touch_valid = true;
     }
   }
+
+  return Core::DeviceRemoval::Keep;
 }
 
 std::optional<int> Device::GetPreferredId() const

@@ -3,21 +3,17 @@
 
 #include "Core/HW/WiimoteEmu/Extension/Nunchuk.h"
 
-#include <algorithm>
 #include <array>
 #include <cstring>
 
 #include "Common/Assert.h"
-#include "Common/BitUtils.h"
 #include "Common/Common.h"
 #include "Common/CommonTypes.h"
-#include "Common/MathUtil.h"
 
 #include "Core/HW/Wiimote.h"
 #include "Core/HW/WiimoteEmu/Extension/DesiredExtensionState.h"
 #include "Core/HW/WiimoteEmu/WiimoteEmu.h"
 
-#include "InputCommon/ControllerEmu/Control/Input.h"
 #include "InputCommon/ControllerEmu/ControlGroup/AnalogStick.h"
 #include "InputCommon/ControllerEmu/ControlGroup/Buttons.h"
 #include "InputCommon/ControllerEmu/ControlGroup/ControlGroup.h"
@@ -38,8 +34,9 @@ Nunchuk::Nunchuk() : Extension1stParty(_trans("Nunchuk"))
 {
   // buttons
   groups.emplace_back(m_buttons = new ControllerEmu::Buttons(BUTTONS_GROUP));
-  m_buttons->AddInput(ControllerEmu::DoNotTranslate, C_BUTTON);
-  m_buttons->AddInput(ControllerEmu::DoNotTranslate, Z_BUTTON);
+  using Translatability = ControllerEmu::Translatability;
+  m_buttons->AddInput(Translatability::DoNotTranslate, C_BUTTON);
+  m_buttons->AddInput(Translatability::DoNotTranslate, Z_BUTTON);
 
   // stick
   constexpr auto gate_radius = ControlState(STICK_GATE_RADIUS) / STICK_RADIUS;
@@ -63,6 +60,8 @@ Nunchuk::Nunchuk() : Extension1stParty(_trans("Nunchuk"))
 
 void Nunchuk::BuildDesiredExtensionState(DesiredExtensionState* target_state)
 {
+  using ControllerEmu::MapFloat;
+
   DataFormat nc_data = {};
 
   // stick
@@ -196,7 +195,7 @@ void Nunchuk::DoState(PointerWrap& p)
   p.Do(m_shake_state);
 }
 
-void Nunchuk::LoadDefaults(const ControllerInterface& ciface)
+void Nunchuk::LoadDefaults()
 {
 #ifndef ANDROID
   // Stick

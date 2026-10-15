@@ -3,6 +3,8 @@
 
 #include "DolphinQt/Debugger/ThreadWidget.h"
 
+#include <bit>
+
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
@@ -11,12 +13,12 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
-#include "Common/BitUtils.h"
 #include "Core/Core.h"
 #include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
 #include "DolphinQt/Host.h"
+#include "DolphinQt/QtUtils/FromStdString.h"
 #include "DolphinQt/Settings.h"
 
 ThreadWidget::ThreadWidget(QWidget* parent) : QDockWidget(parent)
@@ -118,6 +120,8 @@ void ThreadWidget::ShowContextMenu(QTableWidget* table)
     return;
 
   QMenu* menu = new QMenu(this);
+  menu->setAttribute(Qt::WA_DeleteOnClose, true);
+
   const QString watch_name = QStringLiteral("thread_context_%1").arg(addr, 8, 16, QLatin1Char('0'));
   menu->addAction(tr("Add &breakpoint"), this, [this, addr] { emit RequestBreakpoint(addr); });
   menu->addAction(tr("Add memory breakpoint"), this,
@@ -252,13 +256,14 @@ void ThreadWidget::Update()
   if (!isVisible())
     return;
 
-  const auto emu_state = Core::GetState();
-  if (emu_state == Core::State::Stopping)
+  auto& system = Core::System::GetInstance();
+  const auto emu_state = Core::GetState(system);
+  if (emu_state == Core::State::Stopping || emu_state == Core::State::Uninitialized)
   {
     m_thread_table->setRowCount(0);
     UpdateThreadContext({});
 
-    Core::CPUThreadGuard guard(Core::System::GetInstance());
+    const Core::CPUThreadGuard guard(system);
     UpdateThreadCallstack(guard, {});
   }
   if (emu_state != Core::State::Paused)
@@ -268,7 +273,8 @@ void ThreadWidget::Update()
     return QStringLiteral("%1").arg(value, 8, 16, QLatin1Char('0'));
   };
   const auto format_hex_from = [&format_hex](const Core::CPUThreadGuard& guard, u32 addr) {
-    addr = PowerPC::HostIsRAMAddress(guard, addr) ? PowerPC::HostRead_U32(guard, addr) : 0;
+    addr =
+        PowerPC::MMU::HostIsRAMAddress(guard, addr) ? PowerPC::MMU::HostRead_U32(guard, addr) : 0;
     return format_hex(addr);
   };
   const auto get_state = [](u16 thread_state) {
@@ -302,7 +308,7 @@ void ThreadWidget::Update()
   };
 
   {
-    Core::CPUThreadGuard guard(Core::System::GetInstance());
+    const Core::CPUThreadGuard guard(system);
 
     // YAGCD - Section 4.2.1.4 Dolphin OS Globals
     m_current_context->setText(format_hex_from(guard, 0x800000D4));
@@ -313,7 +319,7 @@ void ThreadWidget::Update()
     m_queue_tail->setText(format_hex_from(guard, 0x800000E0));
 
     // Thread group
-    m_threads = PowerPC::debug_interface.GetThreads(guard);
+    m_threads = guard.GetSystem().GetPowerPC().GetDebugInterface().GetThreads(guard);
 
     int i = 0;
     m_thread_table->setRowCount(i);
@@ -358,8 +364,7 @@ void ThreadWidget::UpdateThreadContext(const Common::Debug::PartialContext& cont
   const auto format_f64_as_u64_idx = [](const auto& table, std::size_t index) {
     if (!table || index >= table->size())
       return QString{};
-    return QStringLiteral("%1").arg(Common::BitCast<u64>(table->at(index)), 16, 16,
-                                    QLatin1Char('0'));
+    return QStringLiteral("%1").arg(std::bit_cast<u64>(table->at(index)), 16, 16, QLatin1Char('0'));
   };
 
   m_context_table->setRowCount(0);
@@ -449,23 +454,24 @@ void ThreadWidget::UpdateThreadCallstack(const Core::CPUThreadGuard& guard,
   u32 sp = context.gpr->at(1);
   for (int i = 0; i < 16; i++)
   {
-    if (sp == 0 || sp == 0xffffffff || !PowerPC::HostIsRAMAddress(guard, sp))
+    if (sp == 0 || sp == 0xffffffff || !PowerPC::MMU::HostIsRAMAddress(guard, sp))
       break;
     m_callstack_table->insertRow(i);
     m_callstack_table->setItem(i, 0, new QTableWidgetItem(format_hex(sp)));
-    if (PowerPC::HostIsRAMAddress(guard, sp + 4))
+    if (PowerPC::MMU::HostIsRAMAddress(guard, sp + 4))
     {
-      const u32 lr_save = PowerPC::HostRead_U32(guard, sp + 4);
+      const u32 lr_save = PowerPC::MMU::HostRead_U32(guard, sp + 4);
       m_callstack_table->setItem(i, 2, new QTableWidgetItem(format_hex(lr_save)));
-      m_callstack_table->setItem(i, 3,
-                                 new QTableWidgetItem(QString::fromStdString(
-                                     PowerPC::debug_interface.GetDescription(lr_save))));
+      m_callstack_table->setItem(
+          i, 3,
+          new QTableWidgetItem(QtUtils::FromStdString(
+              guard.GetSystem().GetPowerPC().GetDebugInterface().GetDescription(lr_save))));
     }
     else
     {
       m_callstack_table->setItem(i, 2, new QTableWidgetItem(QStringLiteral("--------")));
     }
-    sp = PowerPC::HostRead_U32(guard, sp);
+    sp = PowerPC::MMU::HostRead_U32(guard, sp);
     m_callstack_table->setItem(i, 1, new QTableWidgetItem(format_hex(sp)));
   }
 }

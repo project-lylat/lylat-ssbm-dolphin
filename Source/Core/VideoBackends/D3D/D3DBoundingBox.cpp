@@ -79,7 +79,7 @@ std::vector<BBoxType> D3DBoundingBox::Read(u32 index, u32 length)
   HRESULT hr = D3D::context->Map(m_staging_buffer.Get(), 0, D3D11_MAP_READ, 0, &map);
   if (SUCCEEDED(hr))
   {
-    std::memcpy(values.data(), reinterpret_cast<const u8*>(map.pData) + sizeof(BBoxType) * index,
+    std::memcpy(values.data(), static_cast<const u8*>(map.pData) + sizeof(BBoxType) * index,
                 sizeof(BBoxType) * length);
 
     D3D::context->Unmap(m_staging_buffer.Get(), 0);
@@ -88,15 +88,15 @@ std::vector<BBoxType> D3DBoundingBox::Read(u32 index, u32 length)
   return values;
 }
 
-void D3DBoundingBox::Write(u32 index, const std::vector<BBoxType>& values)
+void D3DBoundingBox::Write(u32 index, std::span<const BBoxType> values)
 {
   D3D11_BOX box{index * sizeof(BBoxType),
                 0,
                 0,
-                static_cast<u32>(index + values.size()) * sizeof(BBoxType),
+                static_cast<u32>((index + values.size()) * sizeof(BBoxType)),
                 1,
                 1};
   D3D::context->UpdateSubresource(m_buffer.Get(), 0, &box, values.data(), 0, 0);
 }
 
-};  // namespace DX11
+}  // namespace DX11

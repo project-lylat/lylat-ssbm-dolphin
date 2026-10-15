@@ -25,6 +25,7 @@
 #include "Core/Core.h"
 #include "Core/DolphinAnalytics.h"
 #include "Core/Host.h"
+#include "Core/System.h"
 
 #include "UICommon/CommandLineParse.h"
 #ifdef USE_DISCORD_PRESENCE
@@ -57,7 +58,11 @@ std::vector<std::string> Host_GetPreferredLocales()
   return {};
 }
 
-void Host_NotifyMapLoaded()
+void Host_PPCSymbolsChanged()
+{
+}
+
+void Host_PPCBreakpointsChanged()
 {
 }
 
@@ -86,6 +91,14 @@ void Host_UpdateDisasmDialog()
 {
 }
 
+void Host_JitCacheInvalidation()
+{
+}
+
+void Host_JitProfileDataWiped()
+{
+}
+
 void Host_UpdateMainFrame()
 {
   s_update_main_frame_event.Set();
@@ -109,6 +122,11 @@ bool Host_RendererHasFullFocus()
 bool Host_RendererIsFullscreen()
 {
   return s_platform->IsWindowFullscreen();
+}
+
+bool Host_TASInputHasFocus()
+{
+  return false;
 }
 
 void Host_YieldToUI()
@@ -181,6 +199,10 @@ static std::unique_ptr<Platform> GetPlatform(const optparse::Values& options)
   if (platform_name == "win32" || platform_name.empty())
     return Platform::CreateWin32Platform();
 #endif
+#ifdef __APPLE__
+  if (platform_name == "macos" || platform_name.empty())
+    return Platform::CreateMacOSPlatform();
+#endif
 
   if (platform_name == "headless" || platform_name.empty())
     return Platform::CreateHeadlessPlatform();
@@ -194,23 +216,28 @@ static std::unique_ptr<Platform> GetPlatform(const optparse::Values& options)
 
 int main(int argc, char* argv[])
 {
+  Core::DeclareAsHostThread();
+
   auto parser = CommandLineParse::CreateParser(CommandLineParse::ParserOptions::OmitGUIOptions);
   parser->add_option("-p", "--platform")
       .action("store")
       .help("Window platform to use [%choices]")
-      .choices({
-        "headless"
+      .choices({"headless"
 #ifdef __linux__
-            ,
-            "fbdev"
+                ,
+                "fbdev"
 #endif
 #if HAVE_X11
-            ,
-            "x11"
+                ,
+                "x11"
 #endif
 #ifdef _WIN32
-            ,
-            "win32"
+                ,
+                "win32"
+#endif
+#ifdef __APPLE__
+                ,
+                "macos"
 #endif
       });
 
@@ -320,7 +347,7 @@ int main(int argc, char* argv[])
 
   DolphinAnalytics::Instance().ReportDolphinStart("nogui");
 
-  if (!BootManager::BootCore(std::move(boot), wsi))
+  if (!BootManager::BootCore(Core::System::GetInstance(), std::move(boot), wsi))
   {
     fprintf(stderr, "Could not boot the specified file\n");
     return 1;
@@ -331,9 +358,9 @@ int main(int argc, char* argv[])
 #endif
 
   s_platform->MainLoop();
-  Core::Stop();
+  Core::Stop(Core::System::GetInstance());
 
-  Core::Shutdown();
+  Core::Shutdown(Core::System::GetInstance());
   s_platform.reset();
 
   return 0;
@@ -342,7 +369,7 @@ int main(int argc, char* argv[])
 #ifdef _WIN32
 int wmain(int, wchar_t*[], wchar_t*[])
 {
-  std::vector<std::string> args = CommandLineToUtf8Argv(GetCommandLineW());
+  std::vector<std::string> args = Common::CommandLineToUtf8Argv(GetCommandLineW());
   const int argc = static_cast<int>(args.size());
   std::vector<char*> argv(args.size());
   for (size_t i = 0; i < args.size(); ++i)

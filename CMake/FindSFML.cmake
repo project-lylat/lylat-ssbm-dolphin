@@ -87,9 +87,10 @@ if(SFML_FIND_VERSION AND SFML_INCLUDE_DIR)
         set(SFML_CONFIG_HPP_INPUT "${SFML_INCLUDE_DIR}/SFML/Config.hpp")
     endif()
     FILE(READ "${SFML_CONFIG_HPP_INPUT}" SFML_CONFIG_HPP_CONTENTS)
-    STRING(REGEX MATCH ".*#define SFML_VERSION_MAJOR ([0-9]+).*#define SFML_VERSION_MINOR ([0-9]+).*" SFML_CONFIG_HPP_CONTENTS "${SFML_CONFIG_HPP_CONTENTS}")
-    STRING(REGEX REPLACE ".*#define SFML_VERSION_MAJOR ([0-9]+).*" "\\1" SFML_VERSION_MAJOR "${SFML_CONFIG_HPP_CONTENTS}")
-    STRING(REGEX REPLACE ".*#define SFML_VERSION_MINOR ([0-9]+).*" "\\1" SFML_VERSION_MINOR "${SFML_CONFIG_HPP_CONTENTS}")
+    STRING(REGEX MATCH "#define SFML_VERSION_MAJOR[ \t]+([0-9]+)" SFML_VERSION_MAJOR_MATCH "${SFML_CONFIG_HPP_CONTENTS}")
+    STRING(REGEX MATCH "#define SFML_VERSION_MINOR[ \t]+([0-9]+)" SFML_VERSION_MINOR_MATCH "${SFML_CONFIG_HPP_CONTENTS}")
+    STRING(REGEX REPLACE "#define SFML_VERSION_MAJOR[ \t]+([0-9]+)" "\\1" SFML_VERSION_MAJOR "${SFML_VERSION_MAJOR_MATCH}")
+    STRING(REGEX REPLACE "#define SFML_VERSION_MINOR[ \t]+([0-9]+)" "\\1" SFML_VERSION_MINOR "${SFML_VERSION_MINOR_MATCH}")
     math(EXPR SFML_REQUESTED_VERSION "${SFML_FIND_VERSION_MAJOR} * 10 + ${SFML_FIND_VERSION_MINOR}")
 
     # if we could extract them, compare with the requested version number
@@ -102,10 +103,14 @@ if(SFML_FIND_VERSION AND SFML_INCLUDE_DIR)
             set(SFML_VERSION_OK FALSE)
         endif()
     else()
-        # SFML version is < 2.0
-        if (SFML_REQUESTED_VERSION GREATER 19)
+        # SFML version is < 3.0
+        if (SFML_REQUESTED_VERSION GREATER 29)
             set(SFML_VERSION_OK FALSE)
-            set(SFML_VERSION_MAJOR 1)
+            if (SFML_REQUESTED_VERSION GREATER 19)
+                set(SFML_VERSION_MAJOR 1)
+            else()
+                set(SFML_VERSION_MAJOR 2)
+            endif()
             set(SFML_VERSION_MINOR x)
         endif()
     endif()
@@ -206,4 +211,20 @@ endif()
 # handle success
 if(SFML_FOUND)
     message(STATUS "Found SFML ${SFML_VERSION_MAJOR}.${SFML_VERSION_MINOR} in ${SFML_INCLUDE_DIR}")
+    foreach(FIND_SFML_COMPONENT ${SFML_FIND_COMPONENTS})
+        string(TOLOWER ${FIND_SFML_COMPONENT} FIND_SFML_COMPONENT_LOWER)
+        string(TOUPPER ${FIND_SFML_COMPONENT} FIND_SFML_COMPONENT_UPPER)
+        if(NOT TARGET sfml-${FIND_SFML_COMPONENT_LOWER})
+            add_library(sfml-${FIND_SFML_COMPONENT_LOWER} UNKNOWN IMPORTED)
+            set_target_properties(sfml-${FIND_SFML_COMPONENT_LOWER} PROPERTIES
+                IMPORTED_LOCATION "${SFML_${FIND_SFML_COMPONENT_UPPER}_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${SFML_INCLUDE_DIR}"
+            )
+            if(NOT ${FIND_SFML_COMPONENT_LOWER} STREQUAL system)
+                set_target_properties(sfml-${FIND_SFML_COMPONENT_LOWER} PROPERTIES
+                    INTERFACE_LINK_LIBRARIES sfml-system
+                )
+            endif()
+        endif()
+    endforeach()
 endif()

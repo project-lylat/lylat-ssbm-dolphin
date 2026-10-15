@@ -16,6 +16,8 @@
 #include <wil/resource.h>
 #endif
 
+#include <fmt/format.h>
+
 #include "Common/Common.h"
 #include "Common/CommonPaths.h"
 #include "Common/Config/Config.h"
@@ -39,6 +41,7 @@
 #include "Core/HotkeyManager.h"
 #include "Core/IOS/IOS.h"
 #include "Core/IOS/STM/STM.h"
+#include "Core/Slippi/SlippiSpectate.h"
 #include "Core/System.h"
 #include "Core/WiiRoot.h"
 
@@ -48,19 +51,20 @@
 #include "UICommon/DiscordPresence.h"
 #include "UICommon/USBUtils.h"
 
-#ifdef HAVE_X11
-#include "UICommon/X11Utils.h"
+#include "VideoCommon/VideoBackendBase.h"
+#include "VideoCommon/VideoConfig.h"
+
+#ifdef HAVE_QTDBUS
+#include "UICommon/DBusUtils.h"
 #endif
 
 #ifdef __APPLE__
 #include <IOKit/pwr_mgt/IOPMLib.h>
 #endif
 
-#include "VideoCommon/VideoBackendBase.h"
-
 namespace UICommon
 {
-static size_t s_config_changed_callback_id;
+static Config::ConfigChangedCallbackID s_config_changed_callback_id;
 
 static void CreateDumpPath(std::string path)
 {
@@ -72,6 +76,9 @@ static void CreateDumpPath(std::string path)
   File::CreateFullPath(File::GetUserPath(D_DUMPFRAMES_IDX));
   File::CreateFullPath(File::GetUserPath(D_DUMPOBJECTS_IDX));
   File::CreateFullPath(File::GetUserPath(D_DUMPTEXTURES_IDX));
+  File::CreateFullPath(File::GetUserPath(D_DUMPDEBUG_IDX));
+  File::CreateFullPath(File::GetUserPath(D_DUMPDEBUG_BRANCHWATCH_IDX));
+  File::CreateFullPath(File::GetUserPath(D_DUMPDEBUG_JITBLOCKS_IDX));
 }
 
 static void CreateLoadPath(std::string path)
@@ -125,14 +132,20 @@ void Init()
   Core::RestoreWiiSettings(Core::RestoreReason::CrashRecovery);
 
   Config::Init();
-  Config::AddConfigChangedCallback(InitCustomPaths);
+  const auto config_changed_callback = []() {
+    InitCustomPaths();
+    RefreshConfig();
+  };
+  s_config_changed_callback_id = Config::AddConfigChangedCallback(config_changed_callback);
   Config::AddLayer(ConfigLoaders::GenerateBaseConfigLoader());
   SConfig::Init();
   Discord::Init();
   Common::Log::LogManager::Init();
   VideoBackendBase::ActivateBackend(Config::Get(Config::MAIN_GFX_BACKEND));
 
-  s_config_changed_callback_id = Config::AddConfigChangedCallback(RefreshConfig);
+  // slippi change: init the spectate server so we can connect without starting a game
+  SlippiSpectateServer::getInstance();
+
   RefreshConfig();
 }
 
@@ -144,6 +157,7 @@ void Shutdown()
   WiimoteReal::Shutdown();
   Common::Log::LogManager::Shutdown();
   Discord::Shutdown();
+  g_Config.Shutdown();
   SConfig::Shutdown();
   Config::Shutdown();
 }
@@ -220,7 +234,7 @@ void SetLocale(std::string locale_name)
   if (locale_name == "en")
     locale_name = "en_GB";
 
-  std::replace(locale_name.begin(), locale_name.end(), OTHER_SEPARATOR, PREFERRED_SEPARATOR);
+  std::ranges::replace(locale_name, OTHER_SEPARATOR, PREFERRED_SEPARATOR);
 
   // Use the specified locale if supported.
   if (set_locale(locale_name))
@@ -251,6 +265,9 @@ void CreateDirectories()
   File::CreateFullPath(File::GetUserPath(D_DUMPDSP_IDX));
   File::CreateFullPath(File::GetUserPath(D_DUMPSSL_IDX));
   File::CreateFullPath(File::GetUserPath(D_DUMPTEXTURES_IDX));
+  File::CreateFullPath(File::GetUserPath(D_DUMPDEBUG_IDX));
+  File::CreateFullPath(File::GetUserPath(D_DUMPDEBUG_BRANCHWATCH_IDX));
+  File::CreateFullPath(File::GetUserPath(D_DUMPDEBUG_JITBLOCKS_IDX));
   File::CreateFullPath(File::GetUserPath(D_GAMESETTINGS_IDX));
   File::CreateFullPath(File::GetUserPath(D_GCUSER_IDX));
   File::CreateFullPath(File::GetUserPath(D_GCUSER_IDX) + USA_DIR DIR_SEP);
@@ -263,7 +280,9 @@ void CreateDirectories()
   File::CreateFullPath(File::GetUserPath(D_SCREENSHOTS_IDX));
   File::CreateFullPath(File::GetUserPath(D_SHADERS_IDX));
   File::CreateFullPath(File::GetUserPath(D_SHADERS_IDX) + ANAGLYPH_DIR DIR_SEP);
+  File::CreateFullPath(File::GetUserPath(D_RETROACHIEVEMENTSCACHE_IDX));
   File::CreateFullPath(File::GetUserPath(D_STATESAVES_IDX));
+  File::CreateFullPath(File::GetUserPath(D_ASM_ROOT_IDX));
 #ifndef ANDROID
   File::CreateFullPath(File::GetUserPath(D_THEMES_IDX));
   File::CreateFullPath(File::GetUserPath(D_STYLES_IDX));
@@ -298,21 +317,12 @@ void SetUserDirectory(std::string custom_path)
   //    -> Use AppData\Roaming\Dolphin Emulator as the User directory path
   // 6. Default
   //    -> Use GetExeDirectory()\User
-  //
-  // On Steam builds, we take a simplified approach:
-  // 1. GetExeDirectory()\portable.txt exists
-  //    -> Use GetExeDirectory()\User
-  // 2. AppData\Roaming exists
-  //    -> Use AppData\Roaming\Dolphin Emulator (Steam) as the User directory path
-  // 3. Default
-  //    -> Use GetExeDirectory()\User
 
   // Get AppData path in case we need it.
   wil::unique_cotaskmem_string appdata;
   bool appdata_found = SUCCEEDED(
       SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, nullptr, appdata.put()));
 
-#ifndef STEAM
   // Check our registry keys
   wil::unique_hkey hkey;
   DWORD local = 0;
@@ -379,21 +389,6 @@ void SetUserDirectory(std::string custom_path)
   {
     user_path = File::GetExeDirectory() + DIR_SEP PORTABLE_USER_DIR DIR_SEP;
   }
-#else  // ifndef STEAM
-  if (File::Exists(File::GetExeDirectory() + DIR_SEP "portable.txt"))  // Case 1
-  {
-    user_path = File::GetExeDirectory() + DIR_SEP PORTABLE_USER_DIR DIR_SEP;
-  }
-  else if (appdata_found)  // Case 2
-  {
-    user_path = TStrToUTF8(appdata.get()) + DIR_SEP NORMAL_USER_DIR DIR_SEP;
-  }
-  else  // Case 3
-  {
-    user_path = File::GetExeDirectory() + DIR_SEP PORTABLE_USER_DIR DIR_SEP;
-  }
-#endif
-
 #else
   if (File::IsDirectory(ROOT_DIR DIR_SEP EMBEDDED_USER_DIR))
   {
@@ -433,7 +428,7 @@ void SetUserDirectory(std::string custom_path)
     //    -> Use GetExeDirectory()/User
     // 2. $DOLPHIN_EMU_USERPATH is set
     //    -> Use $DOLPHIN_EMU_USERPATH
-    // 3. ~/.dolphin-emu directory exists
+    // 3. ~/.dolphin-emu directory exists, and we're not in flatpak
     //    -> Use ~/.dolphin-emu
     // 4. Default
     //    -> Use XDG basedir, see
@@ -483,6 +478,13 @@ void SetUserDirectory(std::string custom_path)
       //                                                      (home_path + ".local" DIR_SEP
       //                                                      "share")) +
       //       DIR_SEP NORMAL_USER_DIR DIR_SEP;
+      // if (File::Exists("/.flatpak-info") || !File::Exists(user_path))
+      // {
+      //   const char* data_home = getenv("XDG_DATA_HOME");
+      //   std::string data_path =
+      //       std::string(data_home && data_home[0] == '/' ? data_home :
+      //                                                      (home_path + ".local" DIR_SEP "share")) +
+      //       DIR_SEP NORMAL_USER_DIR DIR_SEP;
 
       //   const char* config_home = getenv("XDG_CONFIG_HOME");
       //   std::string config_path =
@@ -510,7 +512,7 @@ void SetUserDirectory(std::string custom_path)
 
 bool TriggerSTMPowerEvent()
 {
-  const auto ios = IOS::HLE::GetIOS();
+  const auto ios = Core::System::GetInstance().GetIOS();
   if (!ios)
     return false;
 
@@ -519,23 +521,18 @@ bool TriggerSTMPowerEvent()
     return false;
 
   Core::DisplayMessage("Shutting down", 30000);
-  auto& system = Core::System::GetInstance();
-  system.GetProcessorInterface().PowerButton_Tap();
+  ios->GetSystem().GetProcessorInterface().PowerButton_Tap();
 
   return true;
 }
 
-#ifdef HAVE_X11
-void InhibitScreenSaver(Window win, bool inhibit)
-#else
 void InhibitScreenSaver(bool inhibit)
-#endif
 {
   // Inhibit the screensaver. Depending on the operating system this may also
   // disable low-power states and/or screen dimming.
 
-#ifdef HAVE_X11
-  X11Utils::InhibitScreensaver(win, inhibit);
+#ifdef HAVE_QTDBUS
+  DBusUtils::InhibitScreenSaver(inhibit);
 #endif
 
 #ifdef _WIN32
@@ -577,14 +574,12 @@ std::string FormatSize(u64 bytes, int decimals)
   // div 10 to get largest named unit less than size
   // 10 == log2(1024) (number of B in a KiB, KiB in a MiB, etc)
   // Max value is 63 / 10 = 6
-  const int unit = IntLog2(std::max<u64>(bytes, 1)) / 10;
+  const int unit = MathUtil::IntLog2(std::max<u64>(bytes, 1)) / 10;
 
   // Don't need exact values, only 5 most significant digits
   const double unit_size = std::pow(2, unit * 10);
-  std::ostringstream ss;
-  ss << std::fixed << std::setprecision(decimals);
-  ss << bytes / unit_size << ' ' << Common::GetStringT(unit_symbols[unit]);
-  return ss.str();
+  return fmt::format("{:.{}Lf} {}", bytes / unit_size, decimals,
+                     Common::GetStringT(unit_symbols[unit]));
 }
 
 }  // namespace UICommon

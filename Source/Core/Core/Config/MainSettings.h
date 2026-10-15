@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "Common/Common.h"
+#include "Common/CommonTypes.h"
 #include "Common/Config/Config.h"
 #include "Core/Slippi/SlippiConfig.h"
 
@@ -63,12 +64,16 @@ extern const Info<bool> SLIPPI_FORCE_NETPLAY_PORT;
 extern const Info<int> SLIPPI_NETPLAY_PORT;
 extern const Info<bool> SLIPPI_FORCE_LAN_IP;
 extern const Info<std::string> SLIPPI_LAN_IP;
+// The QR sign-in server (a URL; its origin is used). Empty: browser login only.
+extern const Info<std::string> SLIPPI_QR_LOGIN_SERVER;
 extern const Info<bool> SLIPPI_REPLAY_MONTHLY_FOLDERS;
 extern const Info<std::string> SLIPPI_REPLAY_DIR;
 extern const Info<bool> SLIPPI_ENABLE_FRAME_INDEX;
 extern const Info<bool> SLIPPI_BLOCKING_PIPES;
 extern const Info<bool> SLIPPI_ENABLE_JUKEBOX;
 extern const Info<int> SLIPPI_JUKEBOX_VOLUME;
+extern const Info<bool> SLIPPI_ENABLE_RANK_LOCAL;
+extern const Info<bool> SLIPPI_ENABLE_RANK_OPP;
 
 // Playback Settings
 extern const Info<bool> SLIPPI_ENABLE_SEEK;
@@ -79,6 +84,8 @@ extern const Info<bool> MAIN_SKIP_IPL;
 extern const Info<PowerPC::CPUCore> MAIN_CPU_CORE;
 extern const Info<bool> MAIN_JIT_FOLLOW_BRANCH;
 extern const Info<bool> MAIN_FASTMEM;
+extern const Info<bool> MAIN_FASTMEM_ARENA;
+extern const Info<bool> MAIN_LARGE_ENTRY_POINTS_MAP;
 extern const Info<bool> MAIN_ACCURATE_CPU_CACHE;
 // Should really be in the DSP section, but we're kind of stuck with bad decisions made in the past.
 extern const Info<bool> MAIN_DSP_HLE;
@@ -93,8 +100,8 @@ extern const Info<bool> MAIN_OVERRIDE_REGION_SETTINGS;
 extern const Info<bool> MAIN_DPL2_DECODER;
 extern const Info<AudioCommon::DPL2Quality> MAIN_DPL2_QUALITY;
 extern const Info<int> MAIN_AUDIO_LATENCY;
-extern const Info<bool> MAIN_AUDIO_STRETCH;
-extern const Info<int> MAIN_AUDIO_STRETCH_LATENCY;
+extern const Info<int> MAIN_AUDIO_BUFFER_SIZE;
+extern const Info<bool> MAIN_AUDIO_FILL_GAPS;
 extern const Info<std::string> MAIN_MEMCARD_A_PATH;
 extern const Info<std::string> MAIN_MEMCARD_B_PATH;
 const Info<std::string>& GetInfoForMemcardPath(ExpansionInterface::Slot slot);
@@ -111,19 +118,24 @@ extern const Info<int> MAIN_MEMORY_CARD_SIZE;
 extern const Info<ExpansionInterface::EXIDeviceType> MAIN_SLOT_A;
 extern const Info<ExpansionInterface::EXIDeviceType> MAIN_SLOT_B;
 extern const Info<ExpansionInterface::EXIDeviceType> MAIN_SERIAL_PORT_1;
+extern const Info<ExpansionInterface::EXIDeviceType> MAIN_SERIAL_PORT_2;
 const Info<ExpansionInterface::EXIDeviceType>& GetInfoForEXIDevice(ExpansionInterface::Slot slot);
 extern const Info<std::string> MAIN_BBA_MAC;
 extern const Info<std::string> MAIN_BBA_XLINK_IP;
 extern const Info<bool> MAIN_BBA_XLINK_CHAT_OSD;
 extern const Info<std::string> MAIN_BBA_BUILTIN_DNS;
 extern const Info<std::string> MAIN_BBA_BUILTIN_IP;
+extern const Info<std::string> MAIN_BBA_TAPSERVER_DESTINATION;
+extern const Info<std::string> MAIN_MODEM_TAPSERVER_DESTINATION;
 const Info<SerialInterface::SIDevices>& GetInfoForSIDevice(int channel);
 const Info<bool>& GetInfoForAdapterRumble(int channel);
 const Info<bool>& GetInfoForSimulateKonga(int channel);
 extern const Info<bool> MAIN_WII_SD_CARD;
 extern const Info<bool> MAIN_WII_SD_CARD_ENABLE_FOLDER_SYNC;
+extern const Info<u64> MAIN_WII_SD_CARD_FILESIZE;
 extern const Info<bool> MAIN_WII_KEYBOARD;
 extern const Info<bool> MAIN_WIIMOTE_CONTINUOUS_SCANNING;
+extern const Info<std::string> MAIN_WIIMOTE_AUTO_CONNECT_ADDRESSES;
 extern const Info<bool> MAIN_WIIMOTE_ENABLE_SPEAKER;
 extern const Info<bool> MAIN_CONNECT_WIIMOTES_FOR_CONTROLLER_INTERFACE;
 extern const Info<bool> MAIN_MMU;
@@ -141,8 +153,11 @@ extern const Info<bool> MAIN_FPRF;
 extern const Info<bool> MAIN_ACCURATE_NANS;
 extern const Info<bool> MAIN_DISABLE_ICACHE;
 extern const Info<float> MAIN_EMULATION_SPEED;
+extern const Info<bool> MAIN_PRECISION_FRAME_TIMING;
 extern const Info<float> MAIN_OVERCLOCK;
 extern const Info<bool> MAIN_OVERCLOCK_ENABLE;
+extern const Info<float> MAIN_VI_OVERCLOCK;
+extern const Info<bool> MAIN_VI_OVERCLOCK_ENABLE;
 extern const Info<bool> MAIN_RAM_OVERRIDE_ENABLE;
 extern const Info<u32> MAIN_MEM1_SIZE;
 extern const Info<u32> MAIN_MEM2_SIZE;
@@ -172,6 +187,7 @@ extern const Info<DiscIO::Region> MAIN_FALLBACK_REGION;
 extern const Info<bool> MAIN_REAL_WII_REMOTE_REPEAT_REPORTS;
 extern const Info<s32> MAIN_OVERRIDE_BOOT_IOS;
 extern const Info<std::string> MAIN_WII_NUS_SHOP_URL;
+extern const Info<bool> MAIN_WII_WIILINK_ENABLE;
 
 // Main.DSP
 
@@ -184,6 +200,7 @@ extern const Info<bool> MAIN_DUMP_UCODE;
 extern const Info<std::string> MAIN_AUDIO_BACKEND;
 extern const Info<int> MAIN_AUDIO_VOLUME;
 extern const Info<bool> MAIN_AUDIO_MUTED;
+extern const Info<bool> MAIN_AUDIO_MUTE_ON_DISABLED_SPEED_LIMIT;
 #ifdef _WIN32
 extern const Info<std::string> MAIN_WASAPI_DEVICE;
 #endif
@@ -202,6 +219,7 @@ extern const Info<int> MAIN_RENDER_WINDOW_HEIGHT;
 extern const Info<bool> MAIN_RENDER_WINDOW_AUTOSIZE;
 extern const Info<bool> MAIN_KEEP_WINDOW_ON_TOP;
 extern const Info<bool> MAIN_DISABLE_SCREENSAVER;
+extern const Info<bool> MAIN_TIME_TRACKING;
 
 // Main.General
 
@@ -218,6 +236,7 @@ extern const Info<std::string> MAIN_WIRELESS_MAC;
 extern const Info<std::string> MAIN_GDB_SOCKET;
 extern const Info<int> MAIN_GDB_PORT;
 extern const Info<int> MAIN_ISO_PATH_COUNT;
+extern const Info<std::string> MAIN_SKYLANDERS_PATH;
 std::vector<std::string> GetIsoPaths();
 void SetIsoPaths(const std::vector<std::string>& paths);
 
@@ -280,6 +299,7 @@ extern const Info<bool> MAIN_GAMELIST_LIST_WAD;
 extern const Info<bool> MAIN_GAMELIST_LIST_ELF_DOL;
 extern const Info<bool> MAIN_GAMELIST_LIST_WII;
 extern const Info<bool> MAIN_GAMELIST_LIST_GC;
+extern const Info<bool> MAIN_GAMELIST_LIST_TRI;
 extern const Info<bool> MAIN_GAMELIST_LIST_JPN;
 extern const Info<bool> MAIN_GAMELIST_LIST_PAL;
 extern const Info<bool> MAIN_GAMELIST_LIST_USA;
@@ -310,6 +330,7 @@ extern const Info<bool> MAIN_GAMELIST_COLUMN_FILE_SIZE;
 extern const Info<bool> MAIN_GAMELIST_COLUMN_FILE_FORMAT;
 extern const Info<bool> MAIN_GAMELIST_COLUMN_BLOCK_SIZE;
 extern const Info<bool> MAIN_GAMELIST_COLUMN_COMPRESSION;
+extern const Info<bool> MAIN_GAMELIST_COLUMN_TIME_PLAYED;
 extern const Info<bool> MAIN_GAMELIST_COLUMN_TAGS;
 
 // Main.FifoPlayer
@@ -351,6 +372,7 @@ extern const Info<bool> MAIN_DEBUG_JIT_PAIRED_OFF;
 extern const Info<bool> MAIN_DEBUG_JIT_SYSTEM_REGISTERS_OFF;
 extern const Info<bool> MAIN_DEBUG_JIT_BRANCH_OFF;
 extern const Info<bool> MAIN_DEBUG_JIT_REGISTER_CACHE_OFF;
+extern const Info<bool> MAIN_DEBUG_JIT_ENABLE_PROFILING;
 
 // Main.BluetoothPassthrough
 
@@ -361,6 +383,7 @@ extern const Info<std::string> MAIN_BLUETOOTH_PASSTHROUGH_LINK_KEYS;
 
 // Main.USBPassthrough
 
+extern const Info<bool> MAIN_USB_PASSTHROUGH_DISGUISE_PLAYSTATION_AS_WII;
 extern const Info<std::string> MAIN_USB_PASSTHROUGH_DEVICES;
 std::set<std::pair<u16, u16>> GetUSBDeviceWhitelist();
 void SetUSBDeviceWhitelist(const std::set<std::pair<u16, u16>>& devices);
@@ -368,6 +391,11 @@ void SetUSBDeviceWhitelist(const std::set<std::pair<u16, u16>>& devices);
 // Main.EmulatedUSBDevices
 
 extern const Info<bool> MAIN_EMULATE_SKYLANDER_PORTAL;
+extern const Info<bool> MAIN_EMULATE_INFINITY_BASE;
+extern const Info<bool> MAIN_EMULATE_WII_SPEAK;
+extern const Info<std::string> MAIN_WII_SPEAK_MICROPHONE;
+extern const Info<bool> MAIN_WII_SPEAK_MUTED;
+extern const Info<s16> MAIN_WII_SPEAK_VOLUME_MODIFIER;
 
 // GameCube path utility functions
 
@@ -396,4 +424,6 @@ std::string GetGCIFolderPath(ExpansionInterface::Slot slot, std::optional<DiscIO
 std::string GetGCIFolderPath(std::string configured_folder, ExpansionInterface::Slot slot,
                              std::optional<DiscIO::Region> region);
 bool IsDefaultGCIFolderPathConfigured(ExpansionInterface::Slot slot);
+bool AreCheatsEnabled();
+bool IsDebuggingEnabled();
 }  // namespace Config

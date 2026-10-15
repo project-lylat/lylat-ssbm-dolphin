@@ -29,6 +29,7 @@
 #include "Core/Core.h"
 #include "Core/Slippi/SlippiPlayback.h"
 #include "Core/State.h"
+#include "Core/System.h"
 
 #include "DolphinQt/Host.h"
 #include "DolphinQt/QtUtils/ModalMessageBox.h"
@@ -43,6 +44,7 @@
 
 #ifdef _WIN32
 #include <Windows.h>
+#include <dwmapi.h>
 #endif
 
 extern std::unique_ptr<SlippiPlaybackStatus> g_playback_status;
@@ -79,7 +81,7 @@ RenderWidget::RenderWidget(QWidget* parent) : QWidget(parent)
   // (which results in them not getting called)
   connect(this, &RenderWidget::StateChanged, Host::GetInstance(), &Host::SetRenderFullscreen,
           Qt::DirectConnection);
-  connect(this, &RenderWidget::HandleChanged, Host::GetInstance(), &Host::SetRenderHandle,
+  connect(this, &RenderWidget::HandleChanged, this, &RenderWidget::OnHandleChanged,
           Qt::DirectConnection);
   connect(this, &RenderWidget::SizeChanged, Host::GetInstance(), &Host::ResizeSurface,
           Qt::DirectConnection);
@@ -140,7 +142,21 @@ void RenderWidget::dropEvent(QDropEvent* event)
     return;
   }
 
-  State::LoadAs(path.toStdString());
+  State::LoadAs(Core::System::GetInstance(), path.toStdString());
+}
+
+void RenderWidget::OnHandleChanged(void* handle)
+{
+  if (handle)
+  {
+#ifdef _WIN32
+    // Remove rounded corners from the render window on Windows 11
+    const DWM_WINDOW_CORNER_PREFERENCE corner_preference = DWMWCP_DONOTROUND;
+    DwmSetWindowAttribute(static_cast<HWND>(handle), DWMWA_WINDOW_CORNER_PREFERENCE,
+                          &corner_preference, sizeof(corner_preference));
+#endif
+  }
+  Host::GetInstance()->SetRenderHandle(handle);
 }
 
 void RenderWidget::OnHideCursorChanged()
@@ -273,7 +289,16 @@ void RenderWidget::SetCursorLocked(bool locked, bool follow_aspect_ratio)
 
     if (ClipCursor(&rect))
 #else
-    // TODO: implement on other platforms. Probably XGrabPointer on Linux.
+    // TODO: Implement on other platforms. XGrabPointer on Linux X11 should be equivalent to
+    // ClipCursor on Windows, though XFixesCreatePointerBarrier and XFixesDestroyPointerBarrier
+    // may also work. On Wayland zwp_pointer_constraints_v1::confine_pointer and
+    // zwp_pointer_constraints_v1::destroy provide this functionality.
+    // More info:
+    // https://stackoverflow.com/a/36269507
+    // https://tronche.com/gui/x/xlib/input/XGrabPointer.html
+    // https://www.x.org/releases/X11R7.7/doc/fixesproto/fixesproto.txt
+    // https://wayland.app/protocols/pointer-constraints-unstable-v1
+
     // The setting is hidden in the UI if not implemented
     if (false)
 #endif
@@ -370,6 +395,10 @@ bool RenderWidget::event(QEvent* event)
     SetCursorLocked(false);
     break;
   case QEvent::MouseButtonPress:
+
+    // Grab focus to stop unwanted keyboard input UI interaction.
+    setFocus();
+
     if (isActiveWindow())
     {
       // Lock the cursor with any mouse button click (behave the same as window focus change).
@@ -407,8 +436,11 @@ bool RenderWidget::event(QEvent* event)
   // Note that this event in Windows is not always aligned to the window that is highlighted,
   // it's the window that has keyboard and mouse focus
   case QEvent::WindowActivate:
-    if (m_should_unpause_on_focus && Core::GetState() == Core::State::Paused)
-      Core::SetState(Core::State::Running);
+    if (m_should_unpause_on_focus &&
+        Core::GetState(Core::System::GetInstance()) == Core::State::Paused)
+    {
+      Core::SetState(Core::System::GetInstance(), Core::State::Running);
+    }
 
     m_should_unpause_on_focus = false;
 
@@ -431,7 +463,8 @@ bool RenderWidget::event(QEvent* event)
 
     UpdateCursor();
 
-    if (Config::Get(Config::MAIN_PAUSE_ON_FOCUS_LOST) && Core::GetState() == Core::State::Running)
+    if (Config::Get(Config::MAIN_PAUSE_ON_FOCUS_LOST) &&
+        Core::GetState(Core::System::GetInstance()) == Core::State::Running)
     {
       // If we are declared as the CPU or GPU thread, it means that the real CPU or GPU thread
       // is waiting for us to finish showing a panic alert (with that panic alert likely being
@@ -439,7 +472,7 @@ bool RenderWidget::event(QEvent* event)
       if (!Core::IsCPUThread() && !Core::IsGPUThread())
       {
         m_should_unpause_on_focus = true;
-        Core::SetState(Core::State::Paused);
+        Core::SetState(Core::System::GetInstance(), Core::State::Paused);
       }
     }
 
@@ -448,6 +481,10 @@ bool RenderWidget::event(QEvent* event)
   case QEvent::Move:
     SetCursorLocked(m_cursor_locked);
     break;
+
+  // According to https://bugreports.qt.io/browse/QTBUG-95925 the recommended practice for
+  // handling DPI change is responding to paint events
+  case QEvent::Paint:
   case QEvent::Resize:
   {
     SetCursorLocked(m_cursor_locked);
@@ -457,9 +494,18 @@ bool RenderWidget::event(QEvent* event)
 
     QScreen* screen = window()->windowHandle()->screen();
 
-    const auto dpr = screen->devicePixelRatio();
+    const float dpr = screen->devicePixelRatio();
+    const int width = new_size.width() * dpr;
+    const int height = new_size.height() * dpr;
 
-    emit SizeChanged(new_size.width() * dpr, new_size.height() * dpr);
+    if (m_last_window_width != width || m_last_window_height != height ||
+        m_last_window_scale != dpr)
+    {
+      m_last_window_width = width;
+      m_last_window_height = height;
+      m_last_window_scale = dpr;
+      emit SizeChanged(width, height);
+    }
     break;
   }
   // Happens when we add/remove the widget from the main window instead of the dedicated one
@@ -482,7 +528,7 @@ bool RenderWidget::event(QEvent* event)
 
 void RenderWidget::PassEventToPresenter(const QEvent* event)
 {
-  if (!Core::IsRunningAndStarted())
+  if (!Core::IsRunning(Core::System::GetInstance()))
     return;
 
   switch (event->type())
@@ -499,10 +545,11 @@ void RenderWidget::PassEventToPresenter(const QEvent* event)
     const u32 key = static_cast<u32>(key_event->key() & 0x1FF);
 
     const char* chars = nullptr;
+    QByteArray utf8;
 
     if (is_down)
     {
-      auto utf8 = key_event->text().toUtf8();
+      utf8 = key_event->text().toUtf8();
 
       if (utf8.size())
         chars = utf8.constData();
@@ -568,5 +615,5 @@ void RenderWidget::Exit()
 
 void RenderWidget::PlaybackSeek()
 {
-  g_playback_status->seekToFrame();
+  g_playback_status->seekToFrame(Core::System::GetInstance());
 }

@@ -12,17 +12,16 @@ struct KeyboardStatus;
 
 namespace SerialInterface
 {
-class CSIDevice_Keyboard : public ISIDevice
+class CSIDevice_Keyboard final : public ISIDevice
 {
 public:
   // Constructor
-  CSIDevice_Keyboard(SIDevices device, int device_number);
+  CSIDevice_Keyboard(Core::System& system, SIDevices device, int device_number);
 
   // Run the SI Buffer
   int RunBuffer(u8* buffer, int request_length) override;
 
-  // Return true on new data
-  bool GetData(u32& hi, u32& low) override;
+  DataResponse GetData(u32& hi, u32& low) override;
 
   KeyboardStatus GetKeyboardStatus() const;
 

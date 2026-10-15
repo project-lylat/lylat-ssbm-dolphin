@@ -3,6 +3,8 @@
 
 #include "Core/IOS/FS/FileSystem.h"
 
+#include <algorithm>
+
 #include "Common/Assert.h"
 #include "Common/FileUtil.h"
 #include "Core/IOS/Device.h"
@@ -19,6 +21,12 @@ bool IsValidNonRootPath(std::string_view path)
 {
   return path.length() > 1 && path.length() <= MaxPathLength && path[0] == '/' &&
          path.back() != '/';
+}
+
+bool IsValidFilename(std::string_view filename)
+{
+  return filename.length() <= MaxFilenameLength &&
+         !std::ranges::any_of(filename, [](char c) { return c == '/'; });
 }
 
 SplitPathResult SplitPathAndBasename(std::string_view path)
@@ -87,8 +95,7 @@ Result<FileStatus> FileHandle::GetStatus() const
 Result<FileHandle> FileSystem::CreateAndOpenFile(Uid uid, Gid gid, const std::string& path,
                                                  Modes modes)
 {
-  Result<FileHandle> file = OpenFile(uid, gid, path, Mode::ReadWrite);
-  if (file.Succeeded())
+  if (Result<FileHandle> file = OpenFile(uid, gid, path, Mode::ReadWrite))
     return file;
 
   const ResultCode result = CreateFile(uid, gid, path, 0, modes);

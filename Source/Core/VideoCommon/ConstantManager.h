@@ -58,6 +58,8 @@ struct alignas(16) PixelShaderConstants
   // For shader_framebuffer_fetch logic ops:
   u32 logic_op_enable;  // bool
   LogicOp logic_op_mode;
+  // For custom shaders...
+  u32 time_ms;
 };
 
 struct alignas(16) VertexShaderConstants
@@ -91,6 +93,7 @@ struct alignas(16) VertexShaderConstants
   // .x - texMtxInfo, .y - postMtxInfo, [0..1].z = color, [0..1].w = alpha
   std::array<uint4, 8> xfmem_pack1;
 
+  float4 cached_normal;
   float4 cached_tangent;
   float4 cached_binormal;
   // For UberShader vertex loader

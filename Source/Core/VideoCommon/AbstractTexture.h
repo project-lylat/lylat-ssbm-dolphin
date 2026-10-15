@@ -16,6 +16,10 @@ public:
   explicit AbstractTexture(const TextureConfig& c);
   virtual ~AbstractTexture() = default;
 
+  // Support implicit conversion between AbstractTexture and ImTextureId
+  using imgui_texture_id = unsigned long long;
+  operator imgui_texture_id() const { return reinterpret_cast<imgui_texture_id>(this); }
+
   virtual void CopyRectangleFromTexture(const AbstractTexture* src,
                                         const MathUtil::Rectangle<int>& src_rect, u32 src_layer,
                                         u32 src_level, const MathUtil::Rectangle<int>& dst_rect,
@@ -38,7 +42,7 @@ public:
   MathUtil::Rectangle<int> GetRect() const { return m_config.GetRect(); }
   MathUtil::Rectangle<int> GetMipRect(u32 level) const { return m_config.GetMipRect(level); }
   bool IsMultisampled() const { return m_config.IsMultisampled(); }
-  bool Save(const std::string& filename, unsigned int level);
+  bool Save(const std::string& filename, unsigned int level, int compression = 6) const;
 
   static bool IsCompressedFormat(AbstractTextureFormat format);
   static bool IsDepthFormat(AbstractTextureFormat format);

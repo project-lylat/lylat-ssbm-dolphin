@@ -29,7 +29,7 @@ std::string getFilePath(std::string file_name)
   return "";
 }
 
-u32 SlippiGameFileLoader::LoadFile(std::string file_name, std::string& data)
+u32 SlippiGameFileLoader::LoadFile(Core::System& system, std::string file_name, std::string& data)
 {
   if (file_cache.count(file_name))
   {
@@ -37,7 +37,20 @@ u32 SlippiGameFileLoader::LoadFile(std::string file_name, std::string& data)
     return static_cast<u32>(data.size());
   }
 
+  if (grpsx_strings.count(file_name) && Core::GetState(system) == Core::State::Running)
+  {
+    std::vector<u8> buf;
+    Core::System::GetInstance().GetDVDThread().ReadFile(file_name, buf);
+    std::string contents(buf.begin(), buf.end());
+
+    file_cache[file_name] = contents;
+    data = file_cache[file_name];
+    INFO_LOG_FMT(SLIPPI, "Preloaded Transformation: {} -> {}", file_name.c_str(), static_cast<u32>(data.size()));
+    return static_cast<u32>(data.size());
+  }
+
   INFO_LOG_FMT(SLIPPI, "Loading file: {}", file_name.c_str());
+
 
   std::string game_file_path = getFilePath(file_name);
   if (game_file_path.empty())
@@ -53,7 +66,7 @@ u32 SlippiGameFileLoader::LoadFile(std::string file_name, std::string& data)
   // If the file was a diff file and the game is running, load the main file from ISO and apply
   // patch
   if (game_file_path.substr(game_file_path.length() - 5) == ".diff" &&
-      Core::GetState() == Core::State::Running)
+      Core::GetState(system) == Core::State::Running)
   {
     std::vector<u8> buf;
     INFO_LOG_FMT(SLIPPI, "Will process diff");

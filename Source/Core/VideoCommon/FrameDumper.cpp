@@ -16,7 +16,9 @@
 #include "VideoCommon/AbstractTexture.h"
 #include "VideoCommon/OnScreenDisplay.h"
 #include "VideoCommon/Present.h"
-#include "VideoCommon/VideoConfig.h"
+
+// The video encoder needs the image to be a multiple of x samples.
+static constexpr int VIDEO_ENCODER_LCM = 4;
 
 static bool DumpFrameToPNG(const FrameData& frame, const std::string& file_name)
 {
@@ -27,7 +29,8 @@ static bool DumpFrameToPNG(const FrameData& frame, const std::string& file_name)
 
 FrameDumper::FrameDumper()
 {
-  m_frame_end_handle = AfterFrameEvent::Register([this] { FlushFrameDump(); }, "FrameDumper");
+  m_frame_end_handle =
+      AfterFrameEvent::Register([this](Core::System&) { FlushFrameDump(); }, "FrameDumper");
 }
 
 FrameDumper::~FrameDumper()
@@ -82,7 +85,7 @@ bool FrameDumper::CheckFrameDumpRenderTexture(u32 target_width, u32 target_heigh
   m_frame_dump_render_texture.reset();
   m_frame_dump_render_texture = g_gfx->CreateTexture(
       TextureConfig(target_width, target_height, 1, 1, 1, AbstractTextureFormat::RGBA8,
-                    AbstractTextureFlag_RenderTarget),
+                    AbstractTextureFlag_RenderTarget, AbstractTextureType::Texture_2DArray),
       "Frame dump render texture");
   if (!m_frame_dump_render_texture)
   {
@@ -102,9 +105,10 @@ bool FrameDumper::CheckFrameDumpReadbackTexture(u32 target_width, u32 target_hei
     return true;
 
   rbtex.reset();
-  rbtex = g_gfx->CreateStagingTexture(
-      StagingTextureType::Readback,
-      TextureConfig(target_width, target_height, 1, 1, 1, AbstractTextureFormat::RGBA8, 0));
+  rbtex = g_gfx->CreateStagingTexture(StagingTextureType::Readback,
+                                      TextureConfig(target_width, target_height, 1, 1, 1,
+                                                    AbstractTextureFormat::RGBA8, 0,
+                                                    AbstractTextureType::Texture_2DArray));
   if (!rbtex)
     return false;
 
@@ -196,7 +200,7 @@ void FrameDumper::FrameDumpThreadFunc()
 {
   Common::SetCurrentThreadName("FrameDumping");
 
-  bool dump_to_ffmpeg = !g_ActiveConfig.bDumpFramesAsImages;
+  bool dump_to_ffmpeg = !Config::Get(Config::GFX_DUMP_FRAMES_AS_IMAGES);
   bool frame_dump_started = false;
 
 // If Dolphin was compiled without ffmpeg, we only support dumping to images.
@@ -350,6 +354,13 @@ bool FrameDumper::IsFrameDumping() const
     return true;
 
   return false;
+}
+
+int FrameDumper::GetRequiredResolutionLeastCommonMultiple() const
+{
+  if (Config::Get(Config::MAIN_MOVIE_DUMP_FRAMES))
+    return VIDEO_ENCODER_LCM;
+  return 1;
 }
 
 void FrameDumper::DoState(PointerWrap& p)

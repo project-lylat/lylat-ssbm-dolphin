@@ -20,16 +20,17 @@
 
 namespace DiscIO
 {
-static const u64 WII_SECTOR_SIZE = 0x8000;
-static const u64 WII_SECTOR_COUNT = 143432 * 2;
-static const u64 WII_DISC_HEADER_SIZE = 256;
+static constexpr u64 WII_SECTOR_SIZE = 0x8000;
+static constexpr u64 WII_SECTOR_COUNT = 143432 * 2;
+static constexpr u64 WII_DISC_HEADER_SIZE = 256;
 
 WbfsFileReader::WbfsFileReader(File::IOFile file, const std::string& path)
     : m_size(0), m_good(false)
 {
   if (!AddFileToList(std::move(file)))
     return;
-  OpenAdditionalFiles(path);
+  if (!path.empty())
+    OpenAdditionalFiles(path);
   if (!ReadHeader())
     return;
   m_good = true;
@@ -43,8 +44,15 @@ WbfsFileReader::WbfsFileReader(File::IOFile file, const std::string& path)
     m_wlba_table[i] = Common::swap16(m_wlba_table[i]);
 }
 
-WbfsFileReader::~WbfsFileReader()
+WbfsFileReader::~WbfsFileReader() = default;
+
+std::unique_ptr<BlobReader> WbfsFileReader::CopyReader() const
 {
+  auto retval =
+      std::unique_ptr<WbfsFileReader>(new WbfsFileReader(m_files[0].file.Duplicate("rb")));
+  for (size_t ix = 1; ix < m_files.size(); ix++)
+    retval->AddFileToList(m_files[ix].file.Duplicate("rb"));
+  return retval;
 }
 
 u64 WbfsFileReader::GetDataSize() const

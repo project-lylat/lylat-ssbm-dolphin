@@ -106,21 +106,19 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
   else
 #endif
   {
-    bool has_broken_decoration =
-        DriverDetails::HasBug(DriverDetails::BUG_BROKEN_FRAGMENT_SHADER_INDEX_DECORATION);
-
-    out.Write("{} {} {} {};\n",
-              has_broken_decoration ? "FRAGMENT_OUTPUT_LOCATION(0)" :
-                                      "FRAGMENT_OUTPUT_LOCATION_INDEXED(0, 0)",
-              use_framebuffer_fetch ? "FRAGMENT_INOUT" : "out",
-              uid_data->uint_output ? "uvec4" : "vec4",
-              use_framebuffer_fetch ? "real_ocol0" : "ocol0");
+    if (use_framebuffer_fetch)
+    {
+      out.Write("FRAGMENT_OUTPUT_LOCATION(0) FRAGMENT_INOUT vec4 real_ocol0;\n");
+    }
+    else
+    {
+      out.Write("FRAGMENT_OUTPUT_LOCATION_INDEXED(0, 0) out {} ocol0;\n",
+                uid_data->uint_output ? "uvec4" : "vec4");
+    }
 
     if (use_dual_source)
     {
-      out.Write("{} out {} ocol1;\n",
-                has_broken_decoration ? "FRAGMENT_OUTPUT_LOCATION(1)" :
-                                        "FRAGMENT_OUTPUT_LOCATION_INDEXED(0, 1)",
+      out.Write("{} out {} ocol1;\n", "FRAGMENT_OUTPUT_LOCATION_INDEXED(0, 1)",
                 uid_data->uint_output ? "uvec4" : "vec4");
     }
   }
@@ -235,6 +233,68 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
     }
 
     out.Write("}}\n\n");
+
+    out.Write("uint selectTexCoordIndex(uint texmap)");
+    out.Write("{{\n");
+
+    if (api_type == APIType::D3D)
+    {
+      out.Write("  switch (texmap) {{\n");
+      for (u32 i = 0; i < numTexgen; i++)
+      {
+        out.Write("  case {}u:\n"
+                  "    return {}u;\n",
+                  i, i);
+      }
+      out.Write("  default:\n"
+                "    return 0u;\n"
+                "  }}\n");
+    }
+    else
+    {
+      out.Write("  if (texmap >= {}u) {{\n", numTexgen);
+      out.Write("    return 0u;\n"
+                "  }}\n");
+      if (numTexgen > 4)
+        out.Write("  if (texmap < 4u) {{\n");
+      if (numTexgen > 2)
+        out.Write("    if (texmap < 2u) {{\n");
+      if (numTexgen > 1)
+        out.Write("      return (texmap == 0u) ? 0u : 1u;\n");
+      else
+        out.Write("      return 0u;\n");
+      if (numTexgen > 2)
+      {
+        out.Write("    }} else {{\n");  // >= 2 < min(4, numTexgen)
+        if (numTexgen > 3)
+          out.Write("      return (texmap == 2u) ? 2u : 3u;\n");
+        else
+          out.Write("      return 2u;\n");
+        out.Write("    }}\n");
+      }
+      if (numTexgen > 4)
+      {
+        out.Write("  }} else {{\n");  // >= 4 < min(8, numTexgen)
+        if (numTexgen > 6)
+          out.Write("    if (texmap < 6u) {{\n");
+        if (numTexgen > 5)
+          out.Write("      return (texmap == 4u) ? 4u : 5u;\n");
+        else
+          out.Write("      return 4u;\n");
+        if (numTexgen > 6)
+        {
+          out.Write("    }} else {{\n");  // >= 6 < min(8, numTexgen)
+          if (numTexgen > 7)
+            out.Write("      return (texmap == 6u) ? 6u : 7u;\n");
+          else
+            out.Write("      return 6u;\n");
+          out.Write("    }}\n");
+        }
+        out.Write("  }}\n");
+      }
+    }
+
+    out.Write("}}\n\n");
   }
 
   // =====================
@@ -323,43 +383,43 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
   //   TEV's Special Lerp
   // ======================
   const auto WriteTevLerp = [&out](std::string_view components) {
-    out.Write(
-        "// TEV's Linear Interpolate, plus bias, add/subtract and scale\n"
-        "int{0} tevLerp{0}(int{0} A, int{0} B, int{0} C, int{0} D, uint bias, bool op, "
-        "uint scale) {{\n"
-        " // Scale C from 0..255 to 0..256\n"
-        "  C += C >> 7;\n"
-        "\n"
-        " // Add bias to D\n"
-        "  if (bias == 1u) D += 128;\n"
-        "  else if (bias == 2u) D -= 128;\n"
-        "\n"
-        "  int{0} lerp = (A << 8) + (B - A)*C;\n"
-        "  if (scale != 3u) {{\n"
-        "    lerp = lerp << scale;\n"
-        "    D = D << scale;\n"
-        "  }}\n"
-        "\n"
-        "  // TODO: Is this rounding bias still added when the scale is divide by 2?  Currently we "
-        "do not apply it.\n"
-        "  if (scale != 3u)\n"
-        "    lerp = lerp + (op ? 127 : 128);\n"
-        "\n"
-        "  int{0} result = lerp >> 8;\n"
-        "\n"
-        "  // Add/Subtract D\n"
-        "  if (op) // Subtract\n"
-        "    result = D - result;\n"
-        "  else // Add\n"
-        "    result = D + result;\n"
-        "\n"
-        "  // Most of the Scale was moved inside the lerp for improved precision\n"
-        "  // But we still do the divide by 2 here\n"
-        "  if (scale == 3u)\n"
-        "    result = result >> 1;\n"
-        "  return result;\n"
-        "}}\n\n",
-        components);
+    out.Write("// TEV's Linear Interpolate, plus bias, add/subtract and scale\n"
+              "int{0} tevLerp{0}(int{0} A, int{0} B, int{0} C, int{0} D, uint bias, bool op, "
+              "uint scale) {{\n"
+              " // Scale C from 0..255 to 0..256\n"
+              "  C += C >> 7;\n"
+              "\n"
+              " // Add bias to D\n"
+              "  if (bias == 1u) D += 128;\n"
+              "  else if (bias == 2u) D -= 128;\n"
+              "\n"
+              "  int{0} lerp = (A << 8) + (B - A)*C;\n"
+              "  if (scale != 3u) {{\n"
+              "    lerp = lerp << scale;\n"
+              "    D = D << scale;\n"
+              "  }}\n"
+              "\n"
+              "  // TODO: Is this rounding bias still added when the scale is divide by 2?  "
+              "Currently we "
+              "do not apply it.\n"
+              "  if (scale != 3u)\n"
+              "    lerp = lerp + (op ? 127 : 128);\n"
+              "\n"
+              "  int{0} result = lerp >> 8;\n"
+              "\n"
+              "  // Add/Subtract D\n"
+              "  if (op) // Subtract\n"
+              "    result = D - result;\n"
+              "  else // Add\n"
+              "    result = D + result;\n"
+              "\n"
+              "  // Most of the Scale was moved inside the lerp for improved precision\n"
+              "  // But we still do the divide by 2 here\n"
+              "  if (scale == 3u)\n"
+              "    result = result >> 1;\n"
+              "  return result;\n"
+              "}}\n\n",
+              components);
   };
   WriteTevLerp("");   // int
   WriteTevLerp("3");  // int3
@@ -400,6 +460,7 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
 
   out.Write("struct State {{\n"
             "  int4 Reg[4];\n"
+            "  int4 RawTexColor;\n"
             "  int4 TexColor;\n"
             "  int AlphaBump;\n"
             "}};\n"
@@ -512,6 +573,9 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
   out.Write("void main()\n{{\n");
   out.Write("  float4 rawpos = gl_FragCoord;\n");
 
+  out.Write("  uint num_stages = {};\n\n",
+            BitfieldExtract<&GenMode::numtevstages>("bpmem_genmode"));
+
   if (use_framebuffer_fetch)
   {
     // Store off a copy of the initial framebuffer value.
@@ -545,6 +609,7 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
   out.Write("  int3 tevcoord = int3(0, 0, 0);\n"
             "  State s;\n"
             "  s.TexColor = int4(0, 0, 0, 0);\n"
+            "  s.RawTexColor = int4(0, 0, 0, 0);\n"
             "  s.AlphaBump = 0;\n"
             "\n");
   for (int i = 0; i < 4; i++)
@@ -569,9 +634,6 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
               "  // if (xfmem_numColorChans <= 1u)\n"
               "  //   o.colors_1 = float4(0.0, 0.0, 0.0, 0.0);\n");
   }
-
-  out.Write("  uint num_stages = {};\n\n",
-            BitfieldExtract<&GenMode::numtevstages>("bpmem_genmode"));
 
   out.Write("  // Main tev loop\n");
 
@@ -625,9 +687,9 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
     // indirect texture stage is enabled). If the matrix is off, the result doesn't matter; if the
     // indirect texture stage is disabled, the result is undefined (and produces a glitchy pattern
     // on hardware, different from this).
-    // For the undefined case, we just skip applying the indirect operation, which is close enough.
-    // Viewtiful Joe hits the undefined case (bug 12525).
-    // Wrapping and add to previous still apply in this case (and when the stage is disabled).
+    // For the undefined case, we just skip applying the indirect operation, which is close
+    // enough. Viewtiful Joe hits the undefined case (bug 12525). Wrapping and add to previous
+    // still apply in this case (and when the stage is disabled).
     out.Write("      if (bpmem_iref(bt) != 0u) {{\n");
     out.Write("        int3 indcoord;\n");
     LookupIndirectTexture("indcoord", "bt");
@@ -718,10 +780,10 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
               "      uint sampler_num = {};\n",
               BitfieldExtract<&TwoTevStageOrders::texmap_even>("ss.order"));
     out.Write("\n"
-              "      int4 color = sampleTextureWrapper(sampler_num, tevcoord.xy, layer);\n"
+              "      s.RawTexColor = sampleTextureWrapper(sampler_num, tevcoord.xy, layer);\n"
               "      uint swap = {};\n",
               BitfieldExtract<&TevStageCombiner::AlphaCombiner::tswap>("ss.ac"));
-    out.Write("      s.TexColor = Swizzle(swap, color);\n");
+    out.Write("      s.TexColor = Swizzle(swap, s.RawTexColor);\n");
     out.Write("    }} else {{\n"
               "      // Texture is disabled\n"
               "      s.TexColor = int4(255, 255, 255, 255);\n"
@@ -833,7 +895,8 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
       "        alpha_B = selectAlphaInput(s, ss, {0}colors_0, {0}colors_1, alpha_b) & 255;\n"
       "      }};\n"
       "      int alpha_C = selectAlphaInput(s, ss, {0}colors_0, {0}colors_1, alpha_c) & 255;\n"
-      "      int alpha_D = selectAlphaInput(s, ss, {0}colors_0, {0}colors_1, alpha_d); // 10 bits "
+      "      int alpha_D = selectAlphaInput(s, ss, {0}colors_0, {0}colors_1, alpha_d); // 10 "
+      "bits "
       "+ sign\n"
       "\n",  // TODO: do we need to sign extend?
       color_input_prefix);
@@ -864,9 +927,9 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
             "\n"
             "      // Write result to the correct input register of the next stage\n");
   WriteSwitch(out, api_type, "alpha_dest", tev_a_set_table, 6, true);
-  out.Write("    }}\n"
-            "  }} // Main TEV loop\n"
-            "\n");
+  out.Write("    }}\n");
+  out.Write("    }} // Main TEV loop\n");
+  out.Write("\n");
 
   // Select the output color and alpha registers from the last stage.
   out.Write("  int4 TevResult;\n");
@@ -926,7 +989,7 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
             "    int ztex = int(" I_ZBIAS "[1].w); // fixed bias\n"
             "\n"
             "    // Whatever texture was in our last stage, it's now our depth texture\n"
-            "    ztex += idot(s.TexColor.xyzw, " I_ZBIAS "[0].xyzw);\n"
+            "    ztex += idot(s.RawTexColor.xyzw, " I_ZBIAS "[0].xyzw);\n"
             "    ztex += (bpmem_ztex_op == 1u) ? zCoord : 0;\n"
             "    zCoord = ztex & 0xFFFFFF;\n"
             "  }}\n"
@@ -949,8 +1012,8 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
   {
     // Instead of using discard, fetch the framebuffer's color value and use it as the output
     // for this fragment.
-    out.Write(
-        "  #define discard_fragment {{ real_ocol0 = float4(initial_ocol0.xyz, 1.0); return; }}\n");
+    out.Write("  #define discard_fragment {{ real_ocol0 = float4(initial_ocol0.xyz, 1.0); "
+              "return; }}\n");
   }
   else
   {
@@ -989,8 +1052,8 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
             "    // Flipper uses a standard 2x2 Bayer Matrix for 6 bit dithering\n"
             "    // Here the matrix is encoded into the two factor constants\n"
             "    int2 dither = int2(rawpos.xy) & 1;\n"
-            "    TevResult.rgb = (TevResult.rgb - (TevResult.rgb >> 6)) + abs(dither.y * 3 - "
-            "dither.x * 2);\n"
+            "    TevResult.rgb = (TevResult.rgb - (TevResult.rgb >> 6)) + (dither.x ^ dither.y) * "
+            "2 + dither.y;\n"
             "  }}\n\n");
 
   // =========
@@ -1116,8 +1179,8 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
               "  }}\n");
   }
 
-  // Some backends require that the shader outputs be uint when writing to a uint render target for
-  // logic op.
+  // Some backends require that the shader outputs be uint when writing to a uint render target
+  // for logic op.
   if (uid_data->uint_output)
   {
     out.Write("  if (bpmem_rgba6_format)\n"
@@ -1216,13 +1279,13 @@ ShaderCode GenPixelShader(APIType api_type, const ShaderHostConfig& host_config,
     WriteSwitch(out, api_type, "blend_dst_factor", blendDstFactor, 4, true);
     WriteSwitch(out, api_type, "blend_dst_factor_alpha", blendDstFactorAlpha, 4, true);
 
-    out.Write(
-        "    float4 blend_result;\n"
-        "    if (blend_subtract)\n"
-        "      blend_result.rgb = initial_ocol0.rgb * blend_dst.rgb - ocol0.rgb * blend_src.rgb;\n"
-        "    else\n"
-        "      blend_result.rgb = initial_ocol0.rgb * blend_dst.rgb + ocol0.rgb * "
-        "blend_src.rgb;\n");
+    out.Write("    float4 blend_result;\n"
+              "    if (blend_subtract)\n"
+              "      blend_result.rgb = initial_ocol0.rgb * blend_dst.rgb - ocol0.rgb * "
+              "blend_src.rgb;\n"
+              "    else\n"
+              "      blend_result.rgb = initial_ocol0.rgb * blend_dst.rgb + ocol0.rgb * "
+              "blend_src.rgb;\n");
 
     out.Write("    if (blend_subtract_alpha)\n"
               "      blend_result.a = initial_ocol0.a * blend_dst.a - ocol0.a * blend_src.a;\n"

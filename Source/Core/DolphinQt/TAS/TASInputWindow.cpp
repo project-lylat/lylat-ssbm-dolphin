@@ -6,7 +6,9 @@
 #include <cmath>
 #include <utility>
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QEvent>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -15,10 +17,8 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
-#include "Common/CommonTypes.h"
-
+#include "DolphinQt/Host.h"
 #include "DolphinQt/QtUtils/AspectRatioWidget.h"
-#include "DolphinQt/QtUtils/QueueOnObject.h"
 #include "DolphinQt/Resources.h"
 #include "DolphinQt/TAS/StickWidget.h"
 #include "DolphinQt/TAS/TASCheckBox.h"
@@ -50,7 +50,7 @@ TASInputWindow::TASInputWindow(QWidget* parent) : QDialog(parent)
 
   QGridLayout* settings_layout = new QGridLayout;
 
-  m_use_controller = new QCheckBox(QStringLiteral("Enable Controller Inpu&t"));
+  m_use_controller = new QCheckBox(tr("Enable Controller Inpu&t"));
   m_use_controller->setToolTip(tr("Warning: Analog inputs may reset to controller values at "
                                   "random. In some cases this can be fixed by adding a deadzone."));
   settings_layout->addWidget(m_use_controller, 0, 0, 1, 2);
@@ -122,8 +122,8 @@ QGroupBox* TASInputWindow::CreateStickInputs(const QString& text, std::string_vi
   visual->SetX(x_default);
   visual->SetY(y_default);
 
-  connect(x_value, qOverload<int>(&QSpinBox::valueChanged), visual, &StickWidget::SetX);
-  connect(y_value, qOverload<int>(&QSpinBox::valueChanged), visual, &StickWidget::SetY);
+  connect(x_value, &QSpinBox::valueChanged, visual, &StickWidget::SetX);
+  connect(y_value, &QSpinBox::valueChanged, visual, &StickWidget::SetY);
   connect(visual, &StickWidget::ChangedX, x_value, &QSpinBox::setValue);
   connect(visual, &StickWidget::ChangedY, y_value, &QSpinBox::setValue);
 
@@ -208,7 +208,7 @@ TASSpinBox* TASInputWindow::CreateSliderValuePair(QBoxLayout* layout, int defaul
   auto* value = new TASSpinBox();
   value->setRange(0, 99999);
   value->setValue(default_);
-  connect(value, qOverload<int>(&QSpinBox::valueChanged), [value, max](int i) {
+  connect(value, &QSpinBox::valueChanged, [value, max](int i) {
     if (i > max)
       value->setValue(max);
   });
@@ -218,7 +218,7 @@ TASSpinBox* TASInputWindow::CreateSliderValuePair(QBoxLayout* layout, int defaul
   slider->setFocusPolicy(Qt::ClickFocus);
 
   connect(slider, &QSlider::valueChanged, value, &QSpinBox::setValue);
-  connect(value, qOverload<int>(&QSpinBox::valueChanged), slider, &QSlider::setValue);
+  connect(value, &QSpinBox::valueChanged, slider, &QSlider::setValue);
 
   auto* shortcut = new QShortcut(shortcut_key_sequence, shortcut_widget);
   connect(shortcut, &QShortcut::activated, [value] {
@@ -247,14 +247,12 @@ std::optional<ControlState> TASInputWindow::GetButton(TASCheckBox* checkbox,
 std::optional<ControlState> TASInputWindow::GetSpinBox(TASSpinBox* spin, int zero, int min, int max,
                                                        ControlState controller_state)
 {
-  const int controller_value =
-      ControllerEmu::EmulatedController::MapFloat<int>(controller_state, zero, 0, max);
+  const int controller_value = ControllerEmu::MapFloat<int>(controller_state, zero, 0, max);
 
   if (m_use_controller->isChecked())
     spin->OnControllerValueChanged(controller_value);
 
-  return ControllerEmu::EmulatedController::MapToFloat<ControlState, int>(spin->GetValue(), zero,
-                                                                          min, max);
+  return ControllerEmu::MapToFloat<ControlState, int>(spin->GetValue(), zero, min, max);
 }
 
 std::optional<ControlState> TASInputWindow::GetSpinBox(TASSpinBox* spin, int zero,
@@ -267,4 +265,17 @@ std::optional<ControlState> TASInputWindow::GetSpinBox(TASSpinBox* spin, int zer
     spin->OnControllerValueChanged(controller_value);
 
   return (spin->GetValue() - zero) / scale;
+}
+
+void TASInputWindow::changeEvent(QEvent* const event)
+{
+  if (event->type() == QEvent::ActivationChange)
+  {
+    const bool active_window_is_tas_input =
+        qobject_cast<TASInputWindow*>(QApplication::activeWindow()) != nullptr;
+
+    // Switching between TAS Input windows will call SetTASInputFocus(true) twice, but that's fine.
+    Host::GetInstance()->SetTASInputFocus(active_window_is_tas_input);
+  }
+  QDialog::changeEvent(event);
 }

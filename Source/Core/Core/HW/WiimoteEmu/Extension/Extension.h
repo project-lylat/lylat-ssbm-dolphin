@@ -3,8 +3,6 @@
 
 #pragma once
 
-#include "Core/HW/WiimoteEmu/Extension/Extension.h"
-
 #include <array>
 #include <string>
 
@@ -12,13 +10,13 @@
 #include "Common/CommonTypes.h"
 #include "Core/HW/WiimoteEmu/Encryption.h"
 #include "Core/HW/WiimoteEmu/I2CBus.h"
-#include "InputCommon/ControllerEmu/ControllerEmu.h"
+#include "InputCommon/ControllerEmu/ControlGroup/Attachments.h"
 
 namespace WiimoteEmu
 {
 struct DesiredExtensionState;
 
-class Extension : public ControllerEmu::EmulatedController, public I2CSlave
+class Extension : public ControllerEmu::AttachedController, public I2CSlave
 {
 public:
   explicit Extension(const char* name);
@@ -67,10 +65,6 @@ public:
 
   using Extension::Extension;
 
-  // TODO: This is public for TAS reasons.
-  // TODO: TAS handles encryption poorly.
-  EncryptionKey ext_key;
-
   static constexpr int CALIBRATION_CHECKSUM_BYTES = 2;
 
 #pragma pack(push, 1)
@@ -101,6 +95,7 @@ public:
   static_assert(0x100 == sizeof(Register));
 
 protected:
+  EncryptionKey ext_key;
   Register m_reg = {};
 
   void Reset() override;

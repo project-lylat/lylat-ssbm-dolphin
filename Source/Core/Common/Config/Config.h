@@ -15,6 +15,13 @@
 
 namespace Config
 {
+struct ConfigChangedCallbackID
+{
+  size_t id = -1;
+
+  bool operator==(const ConfigChangedCallbackID&) const = default;
+};
+
 using ConfigChangedCallback = std::function<void()>;
 
 // Layer management
@@ -22,9 +29,10 @@ void AddLayer(std::unique_ptr<ConfigLayerLoader> loader);
 std::shared_ptr<Layer> GetLayer(LayerType layer);
 void RemoveLayer(LayerType layer);
 
-// returns an ID that can be passed to RemoveConfigChangedCallback()
-size_t AddConfigChangedCallback(ConfigChangedCallback func);
-void RemoveConfigChangedCallback(size_t callback_id);
+// Returns an ID that should be passed to RemoveConfigChangedCallback() when the callback is no
+// longer needed. The callback may be called from any thread.
+[[nodiscard]] ConfigChangedCallbackID AddConfigChangedCallback(ConfigChangedCallback func);
+void RemoveConfigChangedCallback(ConfigChangedCallbackID callback_id);
 void OnConfigChanged();
 
 // Returns the number of times the config has changed in the current execution of the program
@@ -92,32 +100,32 @@ LayerType GetActiveLayerForConfig(const Info<T>& info)
   return GetActiveLayerForConfig(info.GetLocation());
 }
 
-template <typename T>
-void Set(LayerType layer, const Info<T>& info, const std::common_type_t<T>& value)
+template <typename InfoT, typename ValueT>
+void Set(LayerType layer, const InfoT& info, const ValueT& value)
 {
   if (GetLayer(layer)->Set(info, value))
     OnConfigChanged();
 }
 
-template <typename T>
-void SetBase(const Info<T>& info, const std::common_type_t<T>& value)
+template <typename InfoT, typename ValueT>
+void SetBase(const Info<InfoT>& info, const ValueT& value)
 {
-  Set<T>(LayerType::Base, info, value);
+  Set(LayerType::Base, info, value);
 }
 
-template <typename T>
-void SetCurrent(const Info<T>& info, const std::common_type_t<T>& value)
+template <typename InfoT, typename ValueT>
+void SetCurrent(const Info<InfoT>& info, const ValueT& value)
 {
-  Set<T>(LayerType::CurrentRun, info, value);
+  Set(LayerType::CurrentRun, info, value);
 }
 
-template <typename T>
-void SetBaseOrCurrent(const Info<T>& info, const std::common_type_t<T>& value)
+template <typename InfoT, typename ValueT>
+void SetBaseOrCurrent(const Info<InfoT>& info, const ValueT& value)
 {
   if (GetActiveLayerForConfig(info) == LayerType::Base)
-    Set<T>(LayerType::Base, info, value);
+    Set(LayerType::Base, info, value);
   else
-    Set<T>(LayerType::CurrentRun, info, value);
+    Set(LayerType::CurrentRun, info, value);
 }
 
 template <typename T>

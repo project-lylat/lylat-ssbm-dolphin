@@ -30,19 +30,17 @@ enum class EXIDeviceType : int
   AD16,
   Microphone,
   Ethernet,
-  // Was used for Triforce in the past, but the implementation is no longer in Dolphin.
-  // It's kept here so that values below will stay constant.
-  AMBaseboard,
+  Baseboard,
   Gecko,
   // Only used when creating a device by EXIDevice_Create.
   // Converted to MemoryCard internally.
   MemoryCardFolder,
   AGP,
   EthernetXLink,
-  // Only used on Apple devices.
   EthernetTapServer,
   EthernetBuiltIn,
   Slippi,
+  ModemTapServer,
   None = 0xFF
 };
 
@@ -65,7 +63,6 @@ public:
   virtual bool IsPresent() const;
   virtual void SetCS(int cs);
   virtual void DoState(PointerWrap& p);
-  virtual void PauseAndLock(bool do_lock, bool resume_on_unlock = true);
 
   // Is generating interrupt ?
   virtual bool IsInterruptSet();
@@ -91,20 +88,29 @@ std::unique_ptr<IEXIDevice> EXIDevice_Create(Core::System& system, EXIDeviceType
 
 template <>
 struct fmt::formatter<ExpansionInterface::EXIDeviceType>
-    : EnumFormatter<ExpansionInterface::EXIDeviceType::Slippi>
+    : EnumFormatter<ExpansionInterface::EXIDeviceType::ModemTapServer>
 {
   static constexpr array_type names = {
       _trans("Dummy"), _trans("Memory Card"), _trans("Mask ROM"),
       // i18n: A mysterious debugging/diagnostics peripheral for the GameCube.
-      _trans("AD16"), _trans("Microphone"), _trans("Broadband Adapter (TAP)"),
-      _trans("Triforce AM Baseboard"), _trans("USB Gecko"), _trans("GCI Folder"),
-      _trans("Advance Game Port"), _trans("Broadband Adapter (XLink Kai)"),
-      _trans("Broadband Adapter (tapserver)"), _trans("Broadband Adapter (HLE)"), _trans("Slippi")};
+      _trans("AD16"),
+      _trans("Microphone"),
+      _trans("Broadband Adapter (TAP)"),
+      _trans("Triforce Baseboard"),
+      _trans("USB Gecko"),
+      _trans("GCI Folder"),
+      _trans("Advance Game Port"),
+      _trans("Broadband Adapter (XLink Kai)"),
+      _trans("Broadband Adapter (tapserver)"),
+      _trans("Broadband Adapter (HLE)"),
+      _trans("Slippi"),
+      _trans("Modem Adapter (tapserver)"),
+  };
 
   constexpr formatter() : EnumFormatter(names) {}
 
   template <typename FormatContext>
-  auto format(const ExpansionInterface::EXIDeviceType& e, FormatContext& ctx)
+  auto format(const ExpansionInterface::EXIDeviceType& e, FormatContext& ctx) const
   {
     if (e != ExpansionInterface::EXIDeviceType::None)
     {

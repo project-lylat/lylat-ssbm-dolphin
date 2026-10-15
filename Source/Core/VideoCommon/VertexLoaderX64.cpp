@@ -49,24 +49,23 @@ VertexLoaderX64::VertexLoaderX64(const TVtxDesc& vtx_desc, const VAT& vtx_att)
   AllocCodeSpace(4096);
   ClearCodeSpace();
   GenerateVertexLoader();
-  WriteProtect();
+  WriteProtect(true);
 
-  JitRegister::Register(region, GetCodePtr(), "VertexLoaderX64\nVtx desc: \n{}\nVAT:\n{}", vtx_desc,
-                        vtx_att);
+  Common::JitRegister::Register(region, GetCodePtr(), "VertexLoaderX64\nVtx desc: \n{}\nVAT:\n{}",
+                                vtx_desc, vtx_att);
 }
 
 OpArg VertexLoaderX64::GetVertexAddr(CPArray array, VertexComponentFormat attribute)
 {
-  OpArg data = MDisp(src_reg, m_src_ofs);
   if (IsIndexed(attribute))
   {
     int bits = attribute == VertexComponentFormat::Index8 ? 8 : 16;
-    LoadAndSwap(bits, scratch1, data);
+    LoadAndSwap(bits, scratch1, MDisp(src_reg, m_src_ofs));
     m_src_ofs += bits / 8;
     if (array == CPArray::Position)
     {
       CMP(bits, R(scratch1), Imm8(-1));
-      m_skip_vertex = J_CC(CC_E, true);
+      m_skip_vertex = J_CC(CC_E, Jump::Near);
     }
     IMUL(32, scratch1, MPIC(&g_main_cp_state.array_strides[array]));
     MOV(64, R(scratch2), MPIC(&VertexLoaderManager::cached_arraybases[array]));
@@ -74,7 +73,7 @@ OpArg VertexLoaderX64::GetVertexAddr(CPArray array, VertexComponentFormat attrib
   }
   else
   {
-    return data;
+    return MDisp(src_reg, m_src_ofs);
   }
 }
 
@@ -83,22 +82,32 @@ void VertexLoaderX64::ReadVertex(OpArg data, VertexComponentFormat attribute,
                                  bool dequantize, u8 scaling_exponent,
                                  AttributeFormat* native_format)
 {
-  static const __m128i shuffle_lut[5][3] = {
-      {_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFF00L),   // 1x u8
-       _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFF01L, 0xFFFFFF00L),   // 2x u8
-       _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFF02L, 0xFFFFFF01L, 0xFFFFFF00L)},  // 3x u8
-      {_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0x00FFFFFFL),   // 1x s8
-       _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0x01FFFFFFL, 0x00FFFFFFL),   // 2x s8
-       _mm_set_epi32(0xFFFFFFFFL, 0x02FFFFFFL, 0x01FFFFFFL, 0x00FFFFFFL)},  // 3x s8
-      {_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFF0001L),   // 1x u16
-       _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFF0203L, 0xFFFF0001L),   // 2x u16
-       _mm_set_epi32(0xFFFFFFFFL, 0xFFFF0405L, 0xFFFF0203L, 0xFFFF0001L)},  // 3x u16
-      {_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0x0001FFFFL),   // 1x s16
-       _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0x0203FFFFL, 0x0001FFFFL),   // 2x s16
-       _mm_set_epi32(0xFFFFFFFFL, 0x0405FFFFL, 0x0203FFFFL, 0x0001FFFFL)},  // 3x s16
-      {_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0x00010203L),   // 1x float
-       _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0x04050607L, 0x00010203L),   // 2x float
-       _mm_set_epi32(0xFFFFFFFFL, 0x08090A0BL, 0x04050607L, 0x00010203L)},  // 3x float
+  using ShuffleRow = std::array<__m128i, 3>;
+  static const Common::EnumMap<ShuffleRow, ComponentFormat::InvalidFloat7> shuffle_lut = {
+      ShuffleRow{_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFF00L),   // 1x u8
+                 _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFF01L, 0xFFFFFF00L),   // 2x u8
+                 _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFF02L, 0xFFFFFF01L, 0xFFFFFF00L)},  // 3x u8
+      ShuffleRow{_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0x00FFFFFFL),   // 1x s8
+                 _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0x01FFFFFFL, 0x00FFFFFFL),   // 2x s8
+                 _mm_set_epi32(0xFFFFFFFFL, 0x02FFFFFFL, 0x01FFFFFFL, 0x00FFFFFFL)},  // 3x s8
+      ShuffleRow{_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFF0001L),   // 1x u16
+                 _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFF0203L, 0xFFFF0001L),   // 2x u16
+                 _mm_set_epi32(0xFFFFFFFFL, 0xFFFF0405L, 0xFFFF0203L, 0xFFFF0001L)},  // 3x u16
+      ShuffleRow{_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0x0001FFFFL),   // 1x s16
+                 _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0x0203FFFFL, 0x0001FFFFL),   // 2x s16
+                 _mm_set_epi32(0xFFFFFFFFL, 0x0405FFFFL, 0x0203FFFFL, 0x0001FFFFL)},  // 3x s16
+      ShuffleRow{_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0x00010203L),   // 1x float
+                 _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0x04050607L, 0x00010203L),   // 2x float
+                 _mm_set_epi32(0xFFFFFFFFL, 0x08090A0BL, 0x04050607L, 0x00010203L)},  // 3x float
+      ShuffleRow{_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0x00010203L),   // 1x invalid
+                 _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0x04050607L, 0x00010203L),   // 2x invalid
+                 _mm_set_epi32(0xFFFFFFFFL, 0x08090A0BL, 0x04050607L, 0x00010203L)},  // 3x invalid
+      ShuffleRow{_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0x00010203L),   // 1x invalid
+                 _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0x04050607L, 0x00010203L),   // 2x invalid
+                 _mm_set_epi32(0xFFFFFFFFL, 0x08090A0BL, 0x04050607L, 0x00010203L)},  // 3x invalid
+      ShuffleRow{_mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0xFFFFFFFFL, 0x00010203L),   // 1x invalid
+                 _mm_set_epi32(0xFFFFFFFFL, 0xFFFFFFFFL, 0x04050607L, 0x00010203L),   // 2x invalid
+                 _mm_set_epi32(0xFFFFFFFFL, 0x08090A0BL, 0x04050607L, 0x00010203L)},  // 3x invalid
   };
   static const __m128 scale_factors[32] = {
       _mm_set_ps1(1. / (1u << 0)),  _mm_set_ps1(1. / (1u << 1)),  _mm_set_ps1(1. / (1u << 2)),
@@ -125,6 +134,14 @@ void VertexLoaderX64::ReadVertex(OpArg data, VertexComponentFormat attribute,
       // we need to scale by 4 twice to cover the 4 floats.
       LEA(32, scratch3, MScaled(remaining_reg, SCALE_4, 0));
       MOVUPS(MPIC(VertexLoaderManager::position_cache.data(), scratch3, SCALE_4), coords);
+      SetJumpTarget(dont_store);
+    }
+    else if (native_format == &m_native_vtx_decl.normals[0])
+    {
+      TEST(32, R(remaining_reg), R(remaining_reg));
+      FixupBranch dont_store = J_CC(CC_NZ);
+      // For similar reasons, the cached normal is 4 floats each
+      MOVUPS(MPIC(VertexLoaderManager::normal_cache.data()), coords);
       SetJumpTarget(dont_store);
     }
     else if (native_format == &m_native_vtx_decl.normals[1])
@@ -169,7 +186,7 @@ void VertexLoaderX64::ReadVertex(OpArg data, VertexComponentFormat attribute,
     else
       MOVD_xmm(coords, data);
 
-    PSHUFB(coords, MPIC(&shuffle_lut[u32(format)][count_in - 1]));
+    PSHUFB(coords, MPIC(&shuffle_lut[format][count_in - 1]));
 
     // Sign-extend.
     if (format == ComponentFormat::Byte)
@@ -221,6 +238,9 @@ void VertexLoaderX64::ReadVertex(OpArg data, VertexComponentFormat attribute,
         PSRLD(coords, 16);
       break;
     case ComponentFormat::Float:
+    case ComponentFormat::InvalidFloat5:
+    case ComponentFormat::InvalidFloat6:
+    case ComponentFormat::InvalidFloat7:
       // Floats don't need to be scaled or converted,
       // so we can just load/swap/store them directly
       // and return early.
@@ -254,7 +274,7 @@ void VertexLoaderX64::ReadVertex(OpArg data, VertexComponentFormat attribute,
     }
   }
 
-  if (format != ComponentFormat::Float)
+  if (format < ComponentFormat::Float)
   {
     CVTDQ2PS(coords, R(coords));
 
@@ -402,6 +422,7 @@ void VertexLoaderX64::GenerateVertexLoader()
   BitSet32 regs = {src_reg,  dst_reg,       scratch1,    scratch2,
                    scratch3, remaining_reg, skipped_reg, base_reg};
   regs &= ABI_ALL_CALLEE_SAVED;
+  regs[RBP] = true;  // Give us a stack frame
   ABI_PushRegistersAndAdjustStack(regs, 0);
 
   // Backup count since we're going to count it down.
@@ -457,8 +478,8 @@ void VertexLoaderX64::GenerateVertexLoader()
 
   if (m_VtxDesc.low.Normal != VertexComponentFormat::NotPresent)
   {
-    static constexpr Common::EnumMap<u8, static_cast<ComponentFormat>(7)> SCALE_MAP = {7, 6, 15, 14,
-                                                                                       0, 0, 0,  0};
+    static constexpr Common::EnumMap<u8, ComponentFormat::InvalidFloat7> SCALE_MAP = {7, 6, 15, 14,
+                                                                                      0, 0, 0,  0};
     const u8 scaling_exponent = SCALE_MAP[m_VtxAttr.g0.NormalFormat];
 
     // Normal

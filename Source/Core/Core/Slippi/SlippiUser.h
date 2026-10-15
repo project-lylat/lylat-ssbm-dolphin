@@ -1,7 +1,6 @@
 #pragma once
 
 #include <atomic>
-#include <curl/curl.h>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -32,6 +31,13 @@ public:
     int port;
 
     std::vector<std::string> chat_messages;
+
+    bool is_bot = false;
+
+    float ranked_rating = 0;
+    int ranked_update_count = 0;
+    int ranked_global_placement = 0;
+    int ranked_regional_placement = 0;
   };
 
   SlippiUser(uintptr_t rs_exi_device_ptr);

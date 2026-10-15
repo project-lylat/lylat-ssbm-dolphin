@@ -3,19 +3,16 @@
 
 #pragma once
 
-#include <map>
 #include <string>
-#include <vector>
+#include <string_view>
 
 #include "Common/CommonTypes.h"
 #include "Common/SymbolDB.h"
 
-#include "Core/Debugger/PPCDebugInterface.h"
-
 namespace Core
 {
 class CPUThreadGuard;
-}
+}  // namespace Core
 
 // This has functionality overlapping Debugger_Symbolmap. Should merge that stuff in here later.
 class PPCSymbolDB : public Common::SymbolDB
@@ -26,12 +23,12 @@ public:
 
   Common::Symbol* AddFunction(const Core::CPUThreadGuard& guard, u32 start_addr) override;
   void AddKnownSymbol(const Core::CPUThreadGuard& guard, u32 startAddr, u32 size,
-                      const std::string& name,
+                      const std::string& name, const std::string& object_name,
                       Common::Symbol::Type type = Common::Symbol::Type::Function);
 
   Common::Symbol* GetSymbolFromAddr(u32 addr) override;
 
-  std::string GetDescription(u32 addr);
+  std::string_view GetDescription(u32 addr);
 
   void FillInCallers();
 
@@ -42,9 +39,4 @@ public:
   void PrintCalls(u32 funcAddr) const;
   void PrintCallers(u32 funcAddr) const;
   void LogFunctionCall(u32 addr);
-
-private:
-  Common::DebugInterface* debugger;
 };
-
-extern PPCSymbolDB g_symbolDB;

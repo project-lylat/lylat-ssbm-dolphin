@@ -17,20 +17,125 @@
 
 namespace Gecko
 {
-std::vector<GeckoCode> LoadCodes(const IniFile& globalIni, const IniFile& localIni)
+std::vector<GeckoCode> DownloadCodes(std::string gametdb_id, bool* succeeded)
+{
+  // codes.rc24.xyz is a mirror of the now defunct geckocodes.org.
+  std::string endpoint{"https://codes.rc24.xyz/txt.php?txt=" + gametdb_id};
+  Common::HttpRequest http;
+
+  // The server always redirects once to the same location.
+  http.FollowRedirects(1);
+
+  const Common::HttpRequest::Response response = http.Get(endpoint);
+  *succeeded = response.has_value();
+  if (!response)
+    return {};
+
+  // temp vector containing parsed codes
+  std::vector<GeckoCode> gcodes;
+
+  // parse the codes
+  std::istringstream ss(std::string(response->begin(), response->end()));
+
+  std::string line;
+
+  // seek past the header, get to the first code
+  std::getline(ss, line);
+  std::getline(ss, line);
+  std::getline(ss, line);
+
+  int read_state = 0;
+  GeckoCode gcode;
+
+  while ((std::getline(ss, line).good()))
+  {
+    // Remove \r at the end of the line for files using windows line endings, std::getline only
+    // removes \n
+    line = StripWhitespace(line);
+
+    if (line.empty())
+    {
+      // add the code
+      if (!gcode.codes.empty())
+        gcodes.push_back(gcode);
+      gcode = GeckoCode();
+      read_state = 0;
+      continue;
+    }
+
+    switch (read_state)
+    {
+    // read new code
+    case 0:
+    {
+      std::istringstream ssline(line);
+      // stop at [ character (beginning of contributor name)
+      std::getline(ssline, gcode.name, '[');
+      gcode.name = StripWhitespace(gcode.name);
+      gcode.user_defined = true;
+      // read the code creator name
+      std::getline(ssline, gcode.creator, ']');
+      read_state = 1;
+    }
+    break;
+
+    // read code lines
+    case 1:
+    {
+      std::istringstream ssline(line);
+      std::string addr, data;
+
+      // Some locales (e.g. fr_FR.UTF-8) don't split the string stream on space
+      // Use the C locale to workaround this behavior
+      ssline.imbue(std::locale::classic());
+
+      ssline >> addr >> data;
+      ssline.seekg(0);
+
+      // check if this line a code, silly, but the dumb txt file comment lines can start with
+      // valid hex chars :/
+      if (8 == addr.length() && 8 == data.length())
+      {
+        GeckoCode::Code new_code;
+        new_code.original_line = line;
+        ssline >> std::hex >> new_code.address >> new_code.data;
+        gcode.codes.push_back(new_code);
+      }
+      else
+      {
+        gcode.notes.push_back(line);
+        read_state = 2;  // start reading comments
+      }
+    }
+    break;
+
+    // read comment lines
+    case 2:
+      // append comment line
+      gcode.notes.push_back(line);
+      break;
+    }
+  }
+
+  // add the last code
+  if (!gcode.codes.empty())
+    gcodes.push_back(gcode);
+
+  return gcodes;
+}
+
+std::vector<GeckoCode> LoadCodes(const Common::IniFile& globalIni, const Common::IniFile& localIni)
 {
   std::vector<GeckoCode> gcodes;
 
-  for (const IniFile* ini : {&globalIni, &localIni})
+  for (const auto* ini : {&globalIni, &localIni})
   {
     std::vector<std::string> lines;
     ini->GetLines("Gecko", &lines, false);
 
     GeckoCode gcode;
 
-    lines.erase(std::remove_if(lines.begin(), lines.end(),
-                               [](const auto& line) { return line.empty() || line[0] == '#'; }),
-                lines.end());
+    std::erase_if(lines, [](const auto& line) { return line.empty() || line[0] == '#'; });
 
     for (auto& line : lines)
     {
@@ -129,7 +234,7 @@ static void SaveGeckoCode(std::vector<std::string>& lines, const GeckoCode& gcod
     lines.push_back('*' + note);
 }
 
-void SaveCodes(IniFile& inifile, const std::vector<GeckoCode>& gcodes)
+void SaveCodes(Common::IniFile& inifile, const std::vector<GeckoCode>& gcodes)
 {
   std::vector<std::string> lines;
   std::vector<std::string> enabled_lines;

@@ -23,6 +23,8 @@
     <string name="wiimote_extension_2">Wii Remote Extension 3</string>
     <string name="wiimote_extension_3">Wii Remote Extension 4</string>
 
+    <string name="real_balance_board">Real Balance Board</string>
+
     <string name="wiimote">Wii Remote</string>
     <string name="wiimote_general">Buttons</string>
     <string name="wiimote_motion_simulation">Motion Simulation</string>
@@ -47,11 +49,13 @@
     <string name="input_clear">Clear</string>
     <string name="input_clear_description">Clear settings for this controller.</string>
     <string name="input_reset_warning">Are you sure? Your current controller settings will be deleted.</string>
+    <string name="keyboard_controller_warning">"You are configuring a \"Keyboard Controller\". This device is exclusively for \"Phantasy Star Online Episode I &amp; II\". If you are unsure, turn back now and configure a \"Standard Controller\".</string>
     <string name="old_controller_settings">Your controller settings are from an old version of Dolphin and won\'t work in this version. Press \"Default\" to start over with new settings.</string>
 
     <string name="input_binding">Input Binding</string>
     <string name="input_binding_description">Press or move an input to bind it to %1$s.</string>
-    <string name="input_binding_no_device">You need to select a device first!</string>
+    <string name="input_binding_no_device">You need to select a device first.</string>
+    <string name="input_binding_disconnected_device">The selected device is disconnected.\n\nPlease reconnect the device or select a different device.</string>
     <string name="input_configure_input">Configure Input</string>
     <string name="input_configure_output">Configure Output</string>
     <string name="input_expression">Expression</string>
@@ -68,7 +72,7 @@
 
     <!-- General Preference Fragment -->
     <string name="general_submenu">General</string>
-    <string name="dual_core">Dual Core</string>
+    <string name="dual_core">Dual Core (speedhack)</string>
     <string name="dual_core_description">Split workload to two CPU cores instead of one. Increases speed.</string>
     <string name="enable_cheats">Enable Cheats</string>
     <string name="speed_limit">Speed Limit (0% = Unlimited)</string>
@@ -92,6 +96,8 @@
     <string name="wii_pal60_description">Changes refresh rate from 50 Hz to 60 Hz in PAL games that support it.</string>
     <string name="wii_screensaver">Enable Screen Saver</string>
     <string name="wii_screensaver_description">Dims the screen after five minutes of inactivity.</string>
+    <string name="wii_enable_wiilink">Enable WiiConnect24 via WiiLink</string>
+    <string name="wii_enable_wiilink_description">Enables the WiiLink service for WiiConnect24 channels. Read the Terms of Service at https://www.wiilink24.com/tos</string>
     <string name="sound_mode">Sound</string>
     <string name="insert_sd_card">Insert SD Card</string>
     <string name="insert_sd_card_description">Supports SD and SDHC. Default size is 128 MB.</string>
@@ -100,10 +106,10 @@
     <string name="wii_sd_card_sync_description">Synchronizes the SD Card with the SD Sync Folder when starting and ending emulation.</string>
     <string name="wii_sd_card_path">SD Card Path</string>
     <string name="wii_sd_sync_folder">SD Sync Folder</string>
-    <string name="wii_sd_card_folder_to_file">Convert Folder to File Now</string>
-    <string name="wii_sd_card_folder_to_file_confirmation">You are about to convert the content of the SD sync folder into the SD card file. All current content of the file will be deleted. Are you sure you want to continue?</string>
-    <string name="wii_sd_card_file_to_folder">Convert File to Folder Now</string>
-    <string name="wii_sd_card_file_to_folder_confirmation">You are about to convert the content of the SD card file into the SD sync folder. All current content of the folder will be deleted. Are you sure you want to continue?</string>
+    <string name="wii_sd_card_folder_to_file">Pack SD Card Now</string>
+    <string name="wii_sd_card_folder_to_file_confirmation">You are about to pack the content of the SD sync folder into the SD card file. All current content of the file will be deleted. Are you sure you want to continue?</string>
+    <string name="wii_sd_card_file_to_folder">Unpack SD Card Now</string>
+    <string name="wii_sd_card_file_to_folder_confirmation">You are about to unpack the content of the SD card file into the SD sync folder. All current content of the folder will be deleted. Are you sure you want to continue?</string>
     <string name="wii_converting">Converting…</string>
     <string name="wii_convert_success">Conversion done.</string>
     <string name="wii_convert_failure">Conversion failed.</string>
@@ -127,9 +133,14 @@
 
     <!-- SerialPort1 Subsetting Fragment -->
     <string name="serialport1_submenu">Serial Port 1</string>
-    <string name="xlink_kai_guide_header">For setup instructions, <a href="https://www.teamxlink.co.uk/wiki/Dolphin">refer to this page.</a></string>
+    <string name="xlink_kai_guide_header">For setup instructions, <a href="https://www.teamxlink.co.uk/wiki/Dolphin">refer to this page.</a>
+    </string>
     <string name="xlink_kai_bba_ip">XLink Kai IP Address/hostname</string>
     <string name="xlink_kai_bba_ip_description">IP address or hostname of device running the XLink Kai client</string>
+    <string name="bba_tapserver_destination">Tapserver destination</string>
+    <string name="bba_tapserver_destination_description">Enter the socket path or netloc (address:port) of the tapserver instance</string>
+    <string name="modem_tapserver_destination">Tapserver destination</string>
+    <string name="modem_tapserver_destination_description">Enter the socket path or netloc (address:port) of the tapserver instance</string>
     <string name="bba_builtin_dns">DNS Server</string>
     <string name="bba_builtin_dns_description">Use 8.8.8.8 for normal DNS, else enter your custom one</string>
 
@@ -142,6 +153,8 @@
     <string name="panic_handlers_description">Show a message box when a potentially serious error has occurred. Disabling this may avoid annoying and non-fatal messages, but it may result in major crashes having no explanation at all.</string>
     <string name="osd_messages">Show On-Screen Display Messages</string>
     <string name="osd_messages_description">Display messages over the emulation screen area. These messages include memory card writes, video backend and CPU information, and JIT cache clearing.</string>
+    <string name="time_tracking">Enable Play Time Tracking</string>
+    <string name="time_tracking_description">Tracks the time you spend playing games and shows it in the game details.</string>
     <string name="download_game_covers">Download Game Covers from GameTDB.com</string>
     <string name="show_titles_in_game_list">Show Titles</string>
     <string name="change_theme">Change App Theme</string>
@@ -172,8 +185,10 @@
     <!-- Audio Settings -->
     <string name="audio_submenu">Audio</string>
     <string name="dsp_emulation_engine">DSP Emulation Engine</string>
-    <string name="audio_stretch">Audio Stretching</string>
-    <string name="audio_stretch_description">Stretches audio to reduce stuttering. Increases latency.</string>
+    <string name="audio_buffer_size">Audio Buffer Size</string>
+    <string name="audio_buffer_size_description">Controls the number of audio samples buffered. Lower values reduce latency but may cause more crackling or stuttering. If unsure, set this to 80 ms.</string>
+    <string name="audio_fill_gaps">Fill Audio Gaps</string>
+    <string name="audio_fill_gaps_description">Repeat existing audio during lag spikes to prevent stuttering. If unsure, leave this checked.</string>
     <string name="audio_volume">Audio Volume</string>
 
     <!-- Path Settings -->
@@ -219,7 +234,21 @@
     <string name="disable_copy_filter">Disable Copy Filter</string>
     <string name="disable_copy_filter_description">Disables the blending of adjacent rows when copying the EFB. This is known in some games as \"deflickering\" or \"smoothing\". Disabling the filter is usually safe, and may result in a sharper image.</string>
     <string name="arbitrary_mipmap_detection">Arbitrary Mipmap Detection</string>
-    <string name="arbitrary_mipmap_detection_description">Enables detection of arbitrary mipmaps, which some games use for special distance-based effects.\nMay have false positives that result in blurry textures at increased internal resolution, such as in games that use very low resolution mipmaps. Disabling this can also reduce stutter in games that frequently load new textures.\n\nIf unsure, leave this checked.</string>
+    <string name="arbitrary_mipmap_detection_description">Enables detection of arbitrary mipmaps, which some games use for special distance-based effects.\nMay have false positives that result in blurry textures at increased internal resolution, such as in games that use very low resolution mipmaps. Disabling this can also reduce stutter in games that frequently load new textures.\n\nIf unsure, leave this unchecked.</string>
+    <string name="color_correction_submenu">Color Correction</string>
+    <string name="color_space">Color Space</string>
+    <string name="correct_color_space">Correct Color Space</string>
+    <string name="correct_color_space_description">Converts the colors from the color spaces that GC/Wii were meant to work with to sRGB/Rec.709.</string>
+    <string name="game_color_space">Game Color Space</string>
+    <string name="ntscm_space">NTSC-M (SMPTE 170M)</string>
+    <string name="ntscj_space">NTSC-J (ARUB TR-89)</string>
+    <string name="pal_space">PAL (EBU)</string>
+    <string name="gamma">Gamma</string>
+    <string name="game_gamma">Game Gamma</string>
+    <string name="game_gamma_description">NTSC-M and NTSC-J target gamma ~2.2. PAL targets gamma ~2.8.\nNone of the two were necessarily followed by games or TVs. 2.35 is a good generic value for all regions.\nIf a game allows you to chose a gamma value, match it here.</string>
+    <string name="correct_sdr_gamma">Correct SDR Gamma</string>
+    <string name="sdr_display_gamma_target">SDR Display Gamma Target</string>
+    <string name="custom_gamma_target">Custom Gamma Target</string>
     <string name="stereoscopy_submenu">Stereoscopy</string>
     <string name="stereoscopy_submenu_description">Stereoscopy allows you to get a better feeling of depth if you have the necessary hardware.\nHeavily decreases emulation speed and sometimes causes issues</string>
     <string name="wide_screen_hack">Widescreen Hack</string>
@@ -309,6 +338,8 @@
     <string name="crop">Crop</string>
     <string name="crop_description">Crops the picture from its native aspect ratio to 4:3 or 16:9. If unsure, leave this unchecked.</string>
     <string name="progressive_scan">Enable Progressive Scan</string>
+    <string name="vsync">V-Sync</string>
+    <string name="vsync_description">This setting is unnecessary on most Android devices, because Android always enables V-Sync. If unsure, leave this unchecked.</string>
     <string name="backend_multithreading">Backend Multithreading</string>
     <string name="backend_multithreading_description">Enables graphics backend multithreading (Vulkan only). May affect performance. If unsure, leave this checked.</string>
     <string name="prefer_vs_for_point_line_expansion">Prefer VS for Point/Line Expansion</string>
@@ -345,7 +376,7 @@
     <string name="enable_cpu_cache_description">Enables emulation of the CPU write-back cache. Enabling will have a significant impact on performance. This should be left disabled unless absolutely needed.</string>
     <string name="clock_override">Clock Override</string>
     <string name="overclock_enable">Override Emulated CPU Clock Speed</string>
-    <string name="overclock_enable_description">Higher values can make variable-framerate games run at a higher framerate, requiring a powerful device. Lower values make games run at a lower framerate, increasing emulation speed, but reducing the emulated console\'s performance.</string>
+    <string name="overclock_enable_description">On games that have an unstable frame rate despite full emulation speed, higher values can improve their performance, requiring a powerful device. Lower values reduce the emulated console\'s performance, but improve the emulation speed.</string>
     <string name="overclock_title">Emulated CPU Clock Speed</string>
     <string name="overclock_title_description">Adjusts the emulated CPU\'s clock rate if \"Override Emulated CPU Clock Speed\" is enabled.</string>
     <string name="memory_override">Memory Override</string>
@@ -354,6 +385,10 @@
     <string name="main_mem1_size">MEM1 Size</string>
     <string name="main_mem2_size">MEM2 Size</string>
     <string name="gpu_options">GPU Options</string>
+    <string name="vi_overclock_enable">Override VBI Frequency</string>
+    <string name="vi_overclock_enable_description">Makes games run at a different frame rate, making the emulation less demanding when lowered, or improving smoothness when increased. This may affect gameplay speed, as it is often tied to the frame rate.</string>
+    <string name="vi_overclock_title">VBI Frequency</string>
+    <string name="vi_overclock_title_description">Adjusts the VBI frequency rate if \"Override VBI Frequency\" is enabled.\nAlso adjusts the emulated CPU\'s clock speed, to keep it relatively the same.</string>
     <string name="synchronize_gpu_thread">Synchronize GPU Thread</string>
     <string name="synchronize_gpu_thread_description">Synchronizing the GPU thread reduces the risk of games crashing or becoming unstable with dual core enabled, but can also reduce the performance gain of dual core. If unsure, select \"On Idle Skipping\". Selecting \"Never\" is risky and not recommended!</string>
     <string name="custom_rtc_options">Custom RTC Options</string>
@@ -383,6 +418,13 @@
     <string name="debug_submenu">Debug</string>
     <string name="debug_warning">Warning: Debug settings will slow emulation</string>
     <string name="debug_fastmem">Disable Fastmem</string>
+    <string name="debug_fastmem_arena">Disable Fastmem Arena</string>
+    <string name="debug_large_entry_points_map">Disable Large Entry Points Map</string>
+    <string name="debug_jit_profiling_header">Jit Profiling</string>
+    <string name="debug_jit_enable_block_profiling">Enable Jit Block Profiling</string>
+    <string name="debug_jit_wipe_block_profiling_data">Wipe Jit Block Profiling Data</string>
+    <string name="debug_jit_wipe_block_profiling_data_alert">Re-initialize JIT block profiling data?</string>
+    <string name="debug_jit_write_block_log_dump">Write Jit Block Log Dump</string>
     <string name="debug_jit_header">Jit</string>
     <string name="debug_jitoff">Jit Disabled</string>
     <string name="debug_jitloadstoreoff">Jit Load Store Disabled</string>
@@ -401,8 +443,10 @@
     <string name="user_data_new_location">Your user data (settings, saves, etc.) is stored in a location which <b>will be deleted</b> when you uninstall the app:</string>
     <!-- Android 10 and up support android:hasFragileUserData -->
     <string name="user_data_new_location_android_10">Your user data (settings, saves, etc.) is stored in a location which by default <b>will be deleted</b> when you uninstall the app:</string>
-    <string name="user_data_new_location_android_11">Because you\'re using Android 11 or newer, file manager apps can\'t access this folder in the same way as regular folders. You might be able to access the folder using the system file manager (if present on your device), or by connecting your device to a PC.</string>
+    <string name="user_data_new_location_android_11">Because you\'re using Android 11 or newer, file manager apps can\'t access this folder in the same way as regular folders. Instead, Dolphin acts as a file provider.</string>
     <string name="user_data_open_system_file_manager">Open System File Manager</string>
+    <string name="user_data_open_user_folder">Open User Data Folder</string>
+
     <string name="user_data_import">Import User Data</string>
     <string name="user_data_export">Export User Data</string>
     <string name="user_data_open_system_file_manager_failed">Sorry, Dolphin couldn\'t find the system file manager on your device.</string>
@@ -457,7 +501,7 @@
     <string name="wii_save_import_title_missing">Failed to import save file. Please launch the game once, then try again.</string>
     <string name="nand_import_warning">Merging a new NAND over your currently selected NAND will overwrite any channels and savegames that already exist. This process is not reversible, so it is recommended that you keep backups of both NANDs. Are you sure you want to continue?</string>
     <string name="system_menu_not_installed_title">Not installed</string>
-    <string name="system_menu_not_installed_message">The Wii Menu is currently not installed. Would you like to install it now?\nAn internet connection is required to download the update. It is recommended to download the update on Wi-Fi, as the amount of data downloaded may be large.</string>
+    <string name="system_menu_not_installed_message">The Wii Menu isn\'t installed. Would you like to install it now?\n\nRoughly 110 MiB of data will be downloaded from the internet. A Wi-Fi connection is recommended.</string>
 
     <!-- Game Properties Screen -->
     <string name="properties_details">Details</string>
@@ -479,6 +523,7 @@
     <string name="game_ini_junk_question">The settings file for this game contains extraneous data added by an old version of Dolphin. This will likely prevent global settings from working as intended.\n\nWould you like to fix this by deleting the settings file for this game? All game-specific settings and cheats that you have added will be removed. This cannot be undone.</string>
 
     <!-- Game Details Screen -->
+    <string name="game_details_time_played">Played for %1$dh %2$dm</string>
     <string name="game_details_country">Country</string>
     <string name="game_details_company">Company</string>
     <string name="game_details_game_id">Game ID</string>
@@ -567,6 +612,7 @@ It can efficiently compress both junk data and encrypted Wii data.
     <string name="emulation_edit_layout">Edit Layout</string>
     <string name="emulation_done">Done</string>
     <string name="emulation_toggle_controls">Toggle Controls</string>
+    <string name="emulation_latching_controls">Latching Controls</string>
     <string name="emulation_toggle_all">Toggle All</string>
     <string name="emulation_control_scale">Scale</string>
     <string name="emulation_control_opacity">Opacity</string>
@@ -614,7 +660,8 @@ It can efficiently compress both junk data and encrypted Wii data.
     <!-- Misc -->
     <string name="enabled">Enabled</string>
     <string name="default_values">Default Values</string>
-    <string name="slider_setting_value">%1$d%2$s</string>
+    <string name="slider_setting_value">%.0f%2$s</string>
+    <string name="slider_setting_float_value">%.2f%2$s</string>
     <string name="disc_number">Disc %1$d</string>
     <string name="replug_gc_adapter">GameCube Adapter couldn\'t be opened. Please re-plug the device.</string>
     <string name="disabled_gc_overlay_notice">The selected GameCube controller is set to \"None\"</string>
@@ -654,6 +701,8 @@ It can efficiently compress both junk data and encrypted Wii data.
     <!-- Slot SP1 Device selection -->
     <string name="broadband_adapter_xlink">Broadband Adapter (XLink Kai)</string>
     <string name="broadband_adapter_hle">Broadband Adapter (HLE)</string>
+    <string name="broadband_adapter_tapserver">Broadband Adapter (tapserver)</string>
+    <string name="modem_adapter_tapserver">Modem Adapter (tapserver)</string>
 
     <!-- Sound Mode -->
     <string name="sound_mode_mono">Mono</string>
@@ -753,13 +802,17 @@ It can efficiently compress both junk data and encrypted Wii data.
     <string name="country_unknown">Unknown</string>
 
     <!-- GameCube Gamepad Types -->
-    <string name="gcpad_disabled">Disabled</string>
-    <string name="gcpad_emulated">Emulated</string>
+    <string name="gcpad_disabled">None</string>
+    <string name="gcpad_emulated">Standard Controller</string>
+    <string name="gcpad_keyboard">Keyboard Controller</string>
+    <string name="gcpad_steering_wheel">Steering Wheel</string>
+    <string name="gcpad_dance_mat">Dance Mat</string>
+    <string name="gcpad_taru_konga">DK Bongos</string>
     <string name="gcpad_gc_adapter">GameCube Adapter</string>
 
     <!-- Wiimote Types -->
-    <string name="wiimote_disabled">Disabled</string>
-    <string name="wiimote_emulated">Emulated</string>
+    <string name="wiimote_disabled">None</string>
+    <string name="wiimote_emulated">Emulated Wii Remote</string>
     <string name="wiimote_real">Real Wii Remote (DolphinBar required)</string>
 
     <!-- Gamepad Controls -->
@@ -836,18 +889,38 @@ It can efficiently compress both junk data and encrypted Wii data.
     <string name="about_branch">Branch:\n%s</string>
     <string name="about_revision">Revision:\n%s</string>
     <string name="about_dolphin_description">Dolphin is a free and open-source GameCube and Wii emulator.\n\nThis software should not be used to play games you do not legally own.</string>
-    <string name="about_website"><a href="https://dolphin-emu.org/">Website</a></string>
-    <string name="about_github"><a href="https://github.com/dolphin-emu/dolphin">GitHub</a></string>
-    <string name="about_support"><a href="https://forums.dolphin-emu.org/">Support</a></string>
-    <string name="about_copyright_warning">\u00A9 2003–2015+ Dolphin Team. \u201cGameCube\u201d and \u201cWii\u201d are trademarks of Nintendo. Dolphin is not affiliated with Nintendo in any way.</string>
+    <string name="about_website">
+        <a href="https://dolphin-emu.org/">Website</a>
+    </string>
+    <string name="about_github">
+        <a href="https://github.com/dolphin-emu/dolphin">GitHub</a>
+    </string>
+    <string name="about_support">
+        <a href="https://forums.dolphin-emu.org/">Support</a>
+    </string>
+    <string name="about_copyright_warning">\u00A9 2003–2024+ Dolphin Team. \u201cGameCube\u201d and \u201cWii\u201d are trademarks of Nintendo. Dolphin is not affiliated with Nintendo in any way.</string>
+    <string name="system_driver">System driver</string>
+    <string name="system_driver_desc">The GPU driver that is part of the OS.</string>
+
+    <!-- Custom GPU drivers -->
+    <string name="gpu_driver_dialog_title">Select the GPU driver for Dolphin</string>
+    <string name="gpu_driver_dialog_system">Default</string>
+    <string name="gpu_driver_dialog_install">Install driver</string>
+    <string name="gpu_driver_dialog_uninstall_done">Successfully switched to the system driver</string>
+    <string name="gpu_driver_submenu">GPU Driver</string>
+    <string name="gpu_driver_install_inprogress">Installing the GPU driver…</string>
+    <string name="gpu_driver_install_success">GPU driver installed successfully</string>
+    <string name="gpu_driver_install_invalid_archive">Failed to unzip the provided driver package</string>
+    <string name="gpu_driver_install_missing_metadata">The supplied driver package is invalid due to missing metadata.</string>
+    <string name="gpu_driver_install_invalid_metadata">The supplied driver package contains invalid metadata, it may be corrupted.</string>
+    <string name="gpu_driver_install_unsupported_android_version">Your device doesn\'t meet the minimum Android version requirements for the supplied driver.</string>
+    <string name="gpu_driver_install_already_installed">The supplied driver package is already installed.</string>
+    <string name="gpu_driver_install_file_not_found">The selected file could not be found or accessed.</string>
 
     <!-- Emulated USB Devices -->
     <string name="emulated_usb_devices">Emulated USB Devices</string>
     <string name="emulate_skylander_portal">Skylanders Portal</string>
     <string name="skylanders_manager">Skylanders Manager</string>
-    <string name="load_skylander">Load</string>
-    <string name="remove_skylander">Remove</string>
-    <string name="create_skylander">Create</string>
     <string name="create_skylander_title">Create Skylander</string>
     <string name="skylander_label">Skylander</string>
     <string name="skylander_slot">Slot %1$d</string>
@@ -855,4 +928,29 @@ It can efficiently compress both junk data and encrypted Wii data.
     <string name="skylander_variant">Variant</string>
     <string name="invalid_skylander">Invalid Skylander Selection</string>
 
+    <string name="emulate_infinity_base">Infinity Base</string>
+    <string name="infinity_manager">Infinity Manager</string>
+    <string name="load_figure">Load</string>
+    <string name="remove_figure">Remove</string>
+    <string name="create_figure">Create</string>
+    <string name="create_figure_title">Create Figure</string>
+    <string name="infinity_label">Infinity Figure</string>
+    <string name="infinity_number">Figure Number</string>
+    <string name="invalid_infinity_figure">Invalid Figure Selection</string>
+    <string name="infinity_hexagon_label">Power Disc/Play Set</string>
+    <string name="infinity_power_hex_two_label">Power Disc Two</string>
+    <string name="infinity_power_hex_three_label">Power Disc Three</string>
+    <string name="infinity_p1_label">Player One</string>
+    <string name="infinity_p2_label">Player Two</string>
+    <string name="infinity_p1a1_label">P1 Ability One</string>
+    <string name="infinity_p2a1_label">P2 Ability One</string>
+    <string name="infinity_p1a2_label">P1 Ability Two</string>
+    <string name="infinity_p2a2_label">P2 Ability Two</string>
+    <string name="incompatible_figure_selected">Incompatible Figure Selected</string>
+    <string name="select_compatible_figure">Please select a compatible figure file</string>
+
+    <string name="emulate_wii_speak">Wii Speak</string>
+    <string name="mute_wii_speak">Mute Wii Speak</string>
+    <string name="wii_speak_permission_warning">Missing Microphone Permission</string>
+    <string name="wii_speak_permission_warning_description">Wii Speak emulation requires microphone permission. You might need to restart the game for the permission to be effective.</string>
 </resources>

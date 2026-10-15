@@ -36,9 +36,11 @@ ExpansionInterfaceManager::~ExpansionInterfaceManager() = default;
 void ExpansionInterfaceManager::AddMemoryCard(Slot slot)
 {
   EXIDeviceType memorycard_device;
-  if (Movie::IsPlayingInput() && Movie::IsConfigSaved())
+
+  auto& movie = m_system.GetMovie();
+  if (movie.IsPlayingInput() && movie.IsConfigSaved())
   {
-    if (Movie::IsUsingMemcard(slot))
+    if (movie.IsUsingMemcard(slot))
     {
       memorycard_device = Config::Get(Config::GetInfoForEXIDevice(slot));
       if (memorycard_device != EXIDeviceType::MemoryCardFolder &&
@@ -64,6 +66,18 @@ void ExpansionInterfaceManager::AddMemoryCard(Slot slot)
   m_channels[SlotToEXIChannel(slot)]->AddDevice(memorycard_device, SlotToEXIDevice(slot));
 }
 
+void ExpansionInterfaceManager::AddSP1Device()
+{
+  EXIDeviceType sp1_device = EXIDeviceType::Baseboard;
+  auto& system = Core::System::GetInstance();
+  if (system.IsTriforce())
+  {
+    sp1_device = Config::Get(Config::MAIN_SERIAL_PORT_1);
+  }
+
+  m_channels[0]->AddDevice(sp1_device, SlotToEXIDevice(Slot::SP1));
+}
+
 u8 SlotToEXIChannel(Slot slot)
 {
   switch (slot)
@@ -74,6 +88,8 @@ u8 SlotToEXIChannel(Slot slot)
     return 1;
   case Slot::SP1:
     return 0;
+  case Slot::SP2:
+    return 2;
   default:
     PanicAlertFmt("Unhandled slot {}", slot);
     return 0;
@@ -90,6 +106,8 @@ u8 SlotToEXIDevice(Slot slot)
     return 0;
   case Slot::SP1:
     return 2;
+  case Slot::SP2:
+    return 0;
   default:
     PanicAlertFmt("Unhandled slot {}", slot);
     return 0;
@@ -110,7 +128,8 @@ void ExpansionInterfaceManager::Init(const Sram* override_sram, const std::strin
     m_using_overridden_sram = false;
   }
 
-  CEXIMemoryCard::Init();
+  auto& core_timing = m_system.GetCoreTiming();
+  CEXIMemoryCard::Init(core_timing);
 
   {
     u16 size_mbits = Memcard::MBIT_SIZE_MEMORY_CARD_2043;
@@ -138,11 +157,12 @@ void ExpansionInterfaceManager::Init(const Sram* override_sram, const std::strin
     AddMemoryCard(slot);
 
   m_channels[0]->AddDevice(EXIDeviceType::MaskROM, 1);
+  AddSP1Device();
   m_channels[SlotToEXIChannel(Slot::SP1)]->AddDevice(Config::Get(Config::MAIN_SERIAL_PORT_1),
                                                      SlotToEXIDevice(Slot::SP1));
-  m_channels[2]->AddDevice(EXIDeviceType::AD16, 0);
+  m_channels[SlotToEXIChannel(Slot::SP2)]->AddDevice(Config::Get(Config::MAIN_SERIAL_PORT_2),
+                                                     SlotToEXIDevice(Slot::SP2));
 
-  auto& core_timing = m_system.GetCoreTiming();
   m_event_type_change_device = core_timing.RegisterEvent("ChangeEXIDevice", ChangeDeviceCallback);
   m_event_type_update_interrupts =
       core_timing.RegisterEvent("EXIUpdateInterrupts", UpdateInterruptsCallback);
@@ -167,12 +187,6 @@ void ExpansionInterfaceManager::DoState(PointerWrap& p)
 {
   for (auto& channel : m_channels)
     channel->DoState(p);
-}
-
-void ExpansionInterfaceManager::PauseAndLock(bool doLock, bool unpauseOnUnlock)
-{
-  for (auto& channel : m_channels)
-    channel->PauseAndLock(doLock, unpauseOnUnlock);
 }
 
 void ExpansionInterfaceManager::RegisterMMIO(MMIO::Mapping* mmio, u32 base)
@@ -214,9 +228,9 @@ void ExpansionInterfaceManager::ChangeDevice(u8 channel, u8 device_num, EXIDevic
   core_timing.ScheduleEvent(0, m_event_type_change_device,
                             ((u64)channel << 32) | ((u64)EXIDeviceType::None << 16) | device_num,
                             from_thread);
-  core_timing.ScheduleEvent(SystemTimers::GetTicksPerSecond(), m_event_type_change_device,
-                            ((u64)channel << 32) | ((u64)device_type << 16) | device_num,
-                            from_thread);
+  core_timing.ScheduleEvent(
+      m_system.GetSystemTimers().GetTicksPerSecond(), m_event_type_change_device,
+      ((u64)channel << 32) | ((u64)device_type << 16) | device_num, from_thread);
 }
 
 CEXIChannel* ExpansionInterfaceManager::GetChannel(u32 index)

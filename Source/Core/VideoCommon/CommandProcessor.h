@@ -60,11 +60,7 @@ enum
   CTRL_REGISTER = 0x02,
   CLEAR_REGISTER = 0x04,
   PERF_SELECT = 0x06,
-  FIFO_TOKEN_REGISTER = 0x0E,
-  FIFO_BOUNDING_BOX_LEFT = 0x10,
-  FIFO_BOUNDING_BOX_RIGHT = 0x12,
-  FIFO_BOUNDING_BOX_TOP = 0x14,
-  FIFO_BOUNDING_BOX_BOTTOM = 0x16,
+  UNK_0A_REGISTER = 0x0A,
   FIFO_BASE_LO = 0x20,
   FIFO_BASE_HI = 0x22,
   FIFO_END_LO = 0x24,
@@ -147,7 +143,8 @@ union UCPClearReg
   {
     u16 ClearFifoOverflow : 1;
     u16 ClearFifoUnderflow : 1;
-    u16 ClearMetrices : 1;
+    // set by GXClearGPMetric
+    u16 ClearMetrics : 1;
     u16 : 13;
   };
   u16 Hex;
@@ -155,27 +152,35 @@ union UCPClearReg
   UCPClearReg(u16 _hex) { Hex = _hex; }
 };
 
-u32 GetPhysicalAddressMask();
+constexpr u32 GetPhysicalAddressMask(bool is_wii)
+{
+  // Physical addresses in CP seem to ignore some of the upper bits (depending on platform)
+  // This can be observed in CP MMIO registers by setting to 0xffffffff and then reading back.
+  return is_wii ? 0x1fffffff : 0x03ffffff;
+}
 
 class CommandProcessorManager
 {
 public:
-  void Init(Core::System& system);
+  explicit CommandProcessorManager(Core::System& system);
+
+  void Init();
   void DoState(PointerWrap& p);
 
-  void RegisterMMIO(Core::System& system, MMIO::Mapping* mmio, u32 base);
+  void RegisterMMIO(MMIO::Mapping* mmio, u32 base);
 
-  void SetCPStatusFromGPU(Core::System& system);
-  void SetCPStatusFromCPU(Core::System& system);
-  void GatherPipeBursted(Core::System& system);
-  void UpdateInterrupts(Core::System& system, u64 userdata);
-  void UpdateInterruptsFromVideoBackend(Core::System& system, u64 userdata);
+  void SetCPStatusFromGPU();
+  void SetCPStatusFromCPU();
+  void GatherPipeBursted();
+  void UpdateInterrupts(u64 userdata);
+  void UpdateInterruptsFromVideoBackend(u64 userdata);
 
   bool IsInterruptWaiting() const;
 
   void SetCpClearRegister();
-  void SetCpControlRegister(Core::System& system);
-  void SetCpStatusRegister(Core::System& system);
+  void SetCpControlRegister();
+  void SetCpStatusRegister();
+  void ResetFifo();
 
   void HandleUnknownOpcode(u8 cmd_byte, const u8* buffer, bool preprocess);
 
@@ -192,6 +197,8 @@ private:
   UCPStatusReg m_cp_status_reg;
   UCPCtrlReg m_cp_ctrl_reg;
   UCPClearReg m_cp_clear_reg;
+  u16 m_perf_select = 0;
+  u16 m_unk_0a_reg = 0;
 
   u16 m_bbox_left = 0;
   u16 m_bbox_top = 0;
@@ -203,6 +210,8 @@ private:
   Common::Flag m_interrupt_waiting;
 
   bool m_is_fifo_error_seen = false;
+
+  Core::System& m_system;
 };
 
 }  // namespace CommandProcessor

@@ -3,6 +3,8 @@
 
 #include "DolphinQt/Config/Mapping/MappingWidget.h"
 
+#include <fmt/core.h>
+
 #include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -16,14 +18,15 @@
 #include "DolphinQt/Config/Mapping/MappingIndicator.h"
 #include "DolphinQt/Config/Mapping/MappingNumeric.h"
 #include "DolphinQt/Config/Mapping/MappingWindow.h"
+#include "DolphinQt/QtUtils/SetWindowDecorations.h"
 
-#include "InputCommon/ControlReference/ControlReference.h"
 #include "InputCommon/ControllerEmu/Control/Control.h"
 #include "InputCommon/ControllerEmu/ControlGroup/ControlGroup.h"
 #include "InputCommon/ControllerEmu/ControlGroup/MixedTriggers.h"
 #include "InputCommon/ControllerEmu/ControllerEmu.h"
 #include "InputCommon/ControllerEmu/Setting/NumericSetting.h"
 #include "InputCommon/ControllerEmu/StickGate.h"
+#include "InputCommon/ControllerInterface/ControllerInterface.h"
 
 MappingWidget::MappingWidget(MappingWindow* parent) : m_parent(parent)
 {
@@ -91,6 +94,11 @@ QGroupBox* MappingWidget::CreateGroupBox(const QString& name, ControllerEmu::Con
     indicator = new AnalogStickIndicator(*static_cast<ControllerEmu::ReshapableInput*>(group));
     break;
 
+  case ControllerEmu::GroupType::IRPassthrough:
+    indicator =
+        new IRPassthroughMappingIndicator(*static_cast<ControllerEmu::IRPassthrough*>(group));
+    break;
+
   default:
     break;
   }
@@ -146,10 +154,9 @@ QGroupBox* MappingWidget::CreateGroupBox(const QString& name, ControllerEmu::Con
             [group_enable_checkbox, group] { group_enable_checkbox->setChecked(group->enabled); });
   }
 
-  const auto advanced_setting_count = std::count_if(
-      group->numeric_settings.begin(), group->numeric_settings.end(), [](auto& setting) {
-        return setting->GetVisibility() == ControllerEmu::SettingVisibility::Advanced;
-      });
+  const auto advanced_setting_count =
+      std::ranges::count(group->numeric_settings, ControllerEmu::SettingVisibility::Advanced,
+                         &ControllerEmu::NumericSettingBase::GetVisibility);
 
   if (advanced_setting_count != 0)
   {
@@ -157,6 +164,31 @@ QGroupBox* MappingWidget::CreateGroupBox(const QString& name, ControllerEmu::Con
     form_layout->addRow(advanced_button);
     connect(advanced_button, &QPushButton::clicked,
             [this, group] { ShowAdvancedControlGroupDialog(group); });
+  }
+
+  if (group->type == ControllerEmu::GroupType::Cursor)
+  {
+    QPushButton* mouse_button = new QPushButton(tr("Use Mouse Controlled Pointing"));
+    form_layout->insertRow(2, mouse_button);
+
+    using ControllerEmu::Cursor;
+    connect(mouse_button, &QCheckBox::clicked, [this, grp = static_cast<Cursor*>(group)] {
+      std::string default_device = g_controller_interface.GetDefaultDeviceString() + ":";
+      const std::string controller_device = GetController()->GetDefaultDevice().ToString() + ":";
+      if (default_device == controller_device)
+      {
+        default_device.clear();
+      }
+      grp->SetControlExpression(0, fmt::format("`{}Cursor Y-`", default_device));
+      grp->SetControlExpression(1, fmt::format("`{}Cursor Y+`", default_device));
+      grp->SetControlExpression(2, fmt::format("`{}Cursor X-`", default_device));
+      grp->SetControlExpression(3, fmt::format("`{}Cursor X+`", default_device));
+
+      grp->SetRelativeInput(false);
+
+      emit ConfigChanged();
+      GetController()->UpdateReferences(g_controller_interface);
+    });
   }
 
   return group_box;
@@ -194,6 +226,8 @@ void MappingWidget::AddSettingWidgets(QFormLayout* layout, ControllerEmu::Contro
       const auto hbox = new QHBoxLayout;
 
       hbox->addWidget(setting_widget);
+      setting_widget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
       hbox->addWidget(CreateSettingAdvancedMappingButton(*setting));
 
       layout->addRow(tr(setting->GetUIName()), hbox);
@@ -248,6 +282,7 @@ void MappingWidget::ShowAdvancedControlGroupDialog(ControllerEmu::ControlGroup* 
   // Enable "Close" button functionality.
   connect(button_box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
+  SetQWidgetWindowDecorations(&dialog);
   dialog.exec();
 }
 
@@ -277,14 +312,49 @@ QGroupBox* MappingWidget::CreateControlsBox(const QString& name, ControllerEmu::
 void MappingWidget::CreateControl(const ControllerEmu::Control* control, QFormLayout* layout,
                                   bool indicator)
 {
-  auto* button = new MappingButton(this, control->control_ref.get(), indicator);
+  // I know this check is terrible, but it's just UI code.
+  const bool is_modifier = control->name == "Modifier";
+
+  using ControlType = MappingButton::ControlType;
+  const auto control_type =
+      control->control_ref->IsInput() ?
+          (is_modifier ? ControlType::ModifierInput : ControlType::NormalInput) :
+          ControlType::Output;
+
+  auto* const button = new MappingButton(this, control->control_ref.get(), control_type);
+
+  if (control->control_ref->IsInput())
+  {
+    if (m_previous_mapping_button)
+    {
+      connect(m_previous_mapping_button, &MappingButton::QueueNextButtonMapping,
+              [this, button]() { m_parent->QueueInputDetection(button); });
+    }
+    m_previous_mapping_button = button;
+  }
 
   button->setMinimumWidth(100);
   button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-  const bool translate = control->translate == ControllerEmu::Translate;
+
+  const bool translate = control->translate == ControllerEmu::Translatability::Translate;
   const QString translated_name =
       translate ? tr(control->ui_name.c_str()) : QString::fromStdString(control->ui_name);
-  layout->addRow(translated_name, button);
+
+  if (indicator && control->control_ref->IsInput())
+  {
+    auto* const button_indicator = new ButtonIndicator{control->control_ref.get()};
+    connect(this, &MappingWidget::Update, button_indicator, qOverload<>(&MappingIndicator::update));
+
+    auto* const hbox = new QHBoxLayout;
+    hbox->setSpacing(0);
+    hbox->addWidget(button_indicator);
+    hbox->addWidget(button);
+    layout->addRow(translated_name, hbox);
+  }
+  else
+  {
+    layout->addRow(translated_name, button);
+  }
 }
 
 ControllerEmu::EmulatedController* MappingWidget::GetController() const
@@ -302,7 +372,11 @@ MappingWidget::CreateSettingAdvancedMappingButton(ControllerEmu::NumericSettingB
     if (setting.IsSimpleValue())
       setting.SetExpressionFromValue();
 
-    IOWindow io(this, GetController(), &setting.GetInputReference(), IOWindow::Type::Input);
+    // Ensure the UI has the game-controller indicator while editing the expression.
+    // And cancel in-progress mappings.
+    ConfigChanged();
+
+    IOWindow io(GetParent(), GetController(), &setting.GetInputReference(), IOWindow::Type::Input);
     io.exec();
 
     setting.SimplifyIfPossible();

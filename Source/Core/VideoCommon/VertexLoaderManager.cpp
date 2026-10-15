@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -39,6 +40,7 @@ namespace VertexLoaderManager
 std::array<u32, 3> position_matrix_index_cache;
 // 3 vertices, 4 floats each to allow SIMD overwrite
 alignas(sizeof(std::array<float, 4>)) std::array<std::array<float, 4>, 3> position_cache;
+alignas(sizeof(std::array<float, 4>)) std::array<float, 4> normal_cache;
 alignas(sizeof(std::array<float, 4>)) std::array<float, 4> tangent_cache;
 alignas(sizeof(std::array<float, 4>)) std::array<float, 4> binormal_cache;
 
@@ -63,10 +65,8 @@ bool g_needs_cp_xf_consistency_check;
 void Init()
 {
   MarkAllDirty();
-  for (auto& map_entry : g_main_vertex_loaders)
-    map_entry = nullptr;
-  for (auto& map_entry : g_preprocess_vertex_loaders)
-    map_entry = nullptr;
+  g_main_vertex_loaders.fill(nullptr);
+  g_preprocess_vertex_loaders.fill(nullptr);
   SETSTAT(g_stats.num_vertex_loaders, 0);
 }
 
@@ -92,40 +92,39 @@ void UpdateVertexArrayPointers()
   // Note: Only array bases 0 through 11 are used by the Vertex loaders.
   //       12 through 15 are used for loading data into xfmem.
   // We also only update the array base if the vertex description states we are going to use it.
+  // TODO: For memory safety, we need to check the sizes returned by GetSpanForAddress
   if (IsIndexed(g_main_cp_state.vtx_desc.low.Position))
+  {
     cached_arraybases[CPArray::Position] =
-        memory.GetPointer(g_main_cp_state.array_bases[CPArray::Position]);
+        memory.GetSpanForAddress(g_main_cp_state.array_bases[CPArray::Position]).data();
+  }
 
   if (IsIndexed(g_main_cp_state.vtx_desc.low.Normal))
+  {
     cached_arraybases[CPArray::Normal] =
-        memory.GetPointer(g_main_cp_state.array_bases[CPArray::Normal]);
+        memory.GetSpanForAddress(g_main_cp_state.array_bases[CPArray::Normal]).data();
+  }
 
   for (u8 i = 0; i < g_main_cp_state.vtx_desc.low.Color.Size(); i++)
   {
     if (IsIndexed(g_main_cp_state.vtx_desc.low.Color[i]))
+    {
       cached_arraybases[CPArray::Color0 + i] =
-          memory.GetPointer(g_main_cp_state.array_bases[CPArray::Color0 + i]);
+          memory.GetSpanForAddress(g_main_cp_state.array_bases[CPArray::Color0 + i]).data();
+    }
   }
 
   for (u8 i = 0; i < g_main_cp_state.vtx_desc.high.TexCoord.Size(); i++)
   {
     if (IsIndexed(g_main_cp_state.vtx_desc.high.TexCoord[i]))
+    {
       cached_arraybases[CPArray::TexCoord0 + i] =
-          memory.GetPointer(g_main_cp_state.array_bases[CPArray::TexCoord0 + i]);
+          memory.GetSpanForAddress(g_main_cp_state.array_bases[CPArray::TexCoord0 + i]).data();
+    }
   }
 
   g_bases_dirty = false;
 }
-
-namespace
-{
-struct entry
-{
-  std::string text;
-  u64 num_verts;
-  bool operator<(const entry& other) const { return num_verts > other.num_verts; }
-};
-}  // namespace
 
 void MarkAllDirty()
 {
@@ -153,14 +152,8 @@ NativeVertexFormat* GetUberVertexFormat(const PortableVertexDeclaration& decl)
   // The padding in the structs can cause the memcmp() in the map to create duplicates.
   // Avoid this by initializing the padding to zero.
   PortableVertexDeclaration new_decl;
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wclass-memaccess"
-#endif
-  std::memset(&new_decl, 0, sizeof(new_decl));
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif
+  static_assert(std::is_trivially_copyable_v<PortableVertexDeclaration>);
+  std::memset(static_cast<void*>(&new_decl), 0, sizeof(new_decl));
   new_decl.stride = decl.stride;
 
   auto MakeDummyAttribute = [](AttributeFormat& attr, ComponentFormat type, int components,
@@ -258,11 +251,6 @@ VertexLoaderBase* GetOrCreateLoader(int vtx_attr_group)
 
 static void CheckCPConfiguration(int vtx_attr_group)
 {
-  if (!g_needs_cp_xf_consistency_check) [[likely]]
-    return;
-
-  g_needs_cp_xf_consistency_check = false;
-
   // Validate that the XF input configuration matches the CP configuration
   u32 num_cp_colors = std::count_if(
       g_main_cp_state.vtx_desc.low.Color.begin(), g_main_cp_state.vtx_desc.low.Color.end(),
@@ -341,6 +329,67 @@ static void CheckCPConfiguration(int vtx_attr_group)
     DolphinAnalytics::Instance().ReportGameQuirk(
         GameQuirk::MISMATCHED_GPU_MATRIX_INDICES_BETWEEN_CP_AND_XF);
   }
+
+  if (g_main_cp_state.vtx_attr[vtx_attr_group].g0.PosFormat >= ComponentFormat::InvalidFloat5)
+  {
+    WARN_LOG_FMT(VIDEO, "Invalid position format {} for VAT {} - {:08x} {:08x} {:08x}",
+                 g_main_cp_state.vtx_attr[vtx_attr_group].g0.PosFormat, vtx_attr_group,
+                 g_main_cp_state.vtx_attr[vtx_attr_group].g0.Hex,
+                 g_main_cp_state.vtx_attr[vtx_attr_group].g1.Hex,
+                 g_main_cp_state.vtx_attr[vtx_attr_group].g2.Hex);
+    DolphinAnalytics::Instance().ReportGameQuirk(GameQuirk::INVALID_POSITION_COMPONENT_FORMAT);
+  }
+  if (g_main_cp_state.vtx_attr[vtx_attr_group].g0.NormalFormat >= ComponentFormat::InvalidFloat5)
+  {
+    WARN_LOG_FMT(VIDEO, "Invalid normal format {} for VAT {} - {:08x} {:08x} {:08x}",
+                 g_main_cp_state.vtx_attr[vtx_attr_group].g0.NormalFormat, vtx_attr_group,
+                 g_main_cp_state.vtx_attr[vtx_attr_group].g0.Hex,
+                 g_main_cp_state.vtx_attr[vtx_attr_group].g1.Hex,
+                 g_main_cp_state.vtx_attr[vtx_attr_group].g2.Hex);
+    DolphinAnalytics::Instance().ReportGameQuirk(GameQuirk::INVALID_NORMAL_COMPONENT_FORMAT);
+  }
+  for (size_t i = 0; i < 8; i++)
+  {
+    if (g_main_cp_state.vtx_attr[vtx_attr_group].GetTexFormat(i) >= ComponentFormat::InvalidFloat5)
+    {
+      WARN_LOG_FMT(VIDEO,
+                   "Invalid texture coordinate {} format {} for VAT {} - {:08x} {:08x} {:08x}", i,
+                   g_main_cp_state.vtx_attr[vtx_attr_group].GetTexFormat(i), vtx_attr_group,
+                   g_main_cp_state.vtx_attr[vtx_attr_group].g0.Hex,
+                   g_main_cp_state.vtx_attr[vtx_attr_group].g1.Hex,
+                   g_main_cp_state.vtx_attr[vtx_attr_group].g2.Hex);
+      DolphinAnalytics::Instance().ReportGameQuirk(
+          GameQuirk::INVALID_TEXTURE_COORDINATE_COMPONENT_FORMAT);
+    }
+  }
+  for (size_t i = 0; i < 2; i++)
+  {
+    if (g_main_cp_state.vtx_attr[vtx_attr_group].GetColorFormat(i) > ColorFormat::RGBA8888)
+    {
+      WARN_LOG_FMT(VIDEO, "Invalid color {} format {} for VAT {} - {:08x} {:08x} {:08x}", i,
+                   g_main_cp_state.vtx_attr[vtx_attr_group].GetColorFormat(i), vtx_attr_group,
+                   g_main_cp_state.vtx_attr[vtx_attr_group].g0.Hex,
+                   g_main_cp_state.vtx_attr[vtx_attr_group].g1.Hex,
+                   g_main_cp_state.vtx_attr[vtx_attr_group].g2.Hex);
+      DolphinAnalytics::Instance().ReportGameQuirk(GameQuirk::INVALID_COLOR_COMPONENT_FORMAT);
+    }
+  }
+}
+
+static bool CanSplit(OpcodeDecoder::Primitive primitive)
+{
+  // Splitting is currently only implemented for the easy cases (individual lines/points/triangles)
+  switch (primitive)
+  {
+  case OpcodeDecoder::Primitive::GX_DRAW_QUADS:
+  case OpcodeDecoder::Primitive::GX_DRAW_QUADS_2:
+  case OpcodeDecoder::Primitive::GX_DRAW_TRIANGLES:
+  case OpcodeDecoder::Primitive::GX_DRAW_LINES:
+  case OpcodeDecoder::Primitive::GX_DRAW_POINTS:
+    return true;
+  default:
+    return false;
+  }
 }
 
 template <bool IsPreprocess>
@@ -359,26 +408,31 @@ int RunVertices(int vtx_attr_group, OpcodeDecoder::Primitive primitive, int coun
     // Doing early return for the opposite case would be cleaner
     // but triggers a false unreachable code warning in MSVC debug builds.
 
-    CheckCPConfiguration(vtx_attr_group);
+    if (g_needs_cp_xf_consistency_check) [[unlikely]]
+    {
+      CheckCPConfiguration(vtx_attr_group);
+      g_needs_cp_xf_consistency_check = false;
+    }
 
     // If the native vertex format changed, force a flush.
     if (loader->m_native_vertex_format != s_current_vtx_fmt ||
         loader->m_native_components != g_current_components) [[unlikely]]
     {
       g_vertex_manager->Flush();
+
+      s_current_vtx_fmt = loader->m_native_vertex_format;
+      g_current_components = loader->m_native_components;
+      auto& system = Core::System::GetInstance();
+      auto& vertex_shader_manager = system.GetVertexShaderManager();
+      vertex_shader_manager.SetVertexFormat(loader->m_native_components,
+                                            loader->m_native_vertex_format->GetVertexDeclaration());
     }
-    s_current_vtx_fmt = loader->m_native_vertex_format;
-    g_current_components = loader->m_native_components;
-    auto& system = Core::System::GetInstance();
-    auto& vertex_shader_manager = system.GetVertexShaderManager();
-    vertex_shader_manager.SetVertexFormat(loader->m_native_components,
-                                          loader->m_native_vertex_format->GetVertexDeclaration());
 
     // CPUCull's performance increase comes from encoding fewer GPU commands, not sending less data
     // Therefore it's only useful to check if culling could remove a flush
-    const bool can_cpu_cull = g_ActiveConfig.bCPUCull &&
-                              primitive < OpcodeDecoder::Primitive::GX_DRAW_LINES &&
-                              !g_vertex_manager->HasSendableVertices();
+    bool can_cpu_cull = g_ActiveConfig.bCPUCull &&
+                        primitive < OpcodeDecoder::Primitive::GX_DRAW_LINES &&
+                        !g_vertex_manager->HasSendableVertices();
 
     // if cull mode is CULL_ALL, tell VertexManager to skip triangles and quads.
     // They still need to go through vertex loading, because we need to calculate a zfreeze
@@ -387,24 +441,35 @@ int RunVertices(int vtx_attr_group, OpcodeDecoder::Primitive primitive, int coun
                           primitive < OpcodeDecoder::Primitive::GX_DRAW_LINES);
 
     const int stride = loader->m_native_vtx_decl.stride;
-    DataReader dst = g_vertex_manager->PrepareForAdditionalData(primitive, count, stride,
-                                                                cullall || can_cpu_cull);
-
-    count = loader->RunVertices(src, dst.GetPointer(), count);
-
-    if (can_cpu_cull && !cullall)
+    do
     {
-      if (!g_vertex_manager->AreAllVerticesCulled(loader, primitive, dst.GetPointer(), count))
+      const int max_vertices = 16380;  // Max is 16383, but 16380 is divisible by both 4 and 3
+      const int run = CanSplit(primitive) && count > max_vertices ? max_vertices : count;
+      count -= run;
+      DataReader dst = g_vertex_manager->PrepareForAdditionalData(primitive, run, stride,
+                                                                  cullall || can_cpu_cull);
+
+      const int num_loaded = loader->RunVertices(src, dst.GetPointer(), run);
+      src += loader->m_vertex_size * max_vertices;
+
+      if (can_cpu_cull && !cullall)
       {
-        DataReader new_dst = g_vertex_manager->DisableCullAll(stride);
-        memmove(new_dst.GetPointer(), dst.GetPointer(), count * stride);
+        const bool all_culled =
+            g_vertex_manager->AreAllVerticesCulled(loader, primitive, dst.GetPointer(), num_loaded);
+        if (!all_culled)
+        {
+          DataReader new_dst = g_vertex_manager->DisableCullAll(stride);
+          memmove(new_dst.GetPointer(), dst.GetPointer(), num_loaded * stride);
+          can_cpu_cull = false;
+        }
       }
-    }
 
-    g_vertex_manager->AddIndices(primitive, count);
-    g_vertex_manager->FlushData(count, loader->m_native_vtx_decl.stride);
+      g_vertex_manager->AddIndices(primitive, num_loaded);
+      g_vertex_manager->FlushData(num_loaded, stride);
 
-    ADDSTAT(g_stats.this_frame.num_prims, count);
+      ADDSTAT(g_stats.this_frame.num_prims, num_loaded);
+    } while (count);
+
     INCSTAT(g_stats.this_frame.num_primitive_joins);
   }
   return size;

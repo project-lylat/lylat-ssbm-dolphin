@@ -6,13 +6,12 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,26 +30,25 @@ class RiivolutionBootActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeHelper.setTheme(this)
+        enableEdgeToEdge()
 
         super.onCreate(savedInstanceState)
 
         binding = ActivityRiivolutionBootBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-
         val path = intent.getStringExtra(ARG_GAME_PATH)
         val gameId = intent.getStringExtra(ARG_GAME_ID)
         val revision = intent.getIntExtra(ARG_REVISION, -1)
         val discNumber = intent.getIntExtra(ARG_DISC_NUMBER, -1)
 
-        var loadPath = StringSetting.MAIN_LOAD_PATH.stringGlobal
+        var loadPath = StringSetting.MAIN_LOAD_PATH.string
         if (loadPath.isEmpty()) loadPath = DirectoryInitialization.getUserDirectory() + "/Load"
 
         binding.textSdRoot.text = getString(R.string.riivolution_sd_root, "$loadPath/Riivolution")
         binding.buttonStart.setOnClickListener {
             if (patches != null) patches!!.saveConfig()
-            EmulationActivity.launch(this, path, true)
+            EmulationActivity.launch(this, path!!, true)
         }
 
         lifecycleScope.launch {
@@ -96,10 +94,6 @@ class RiivolutionBootActivity : AppCompatActivity() {
             binding.scrollViewRiivolution.setPadding(insets.left, 0, insets.right, insets.bottom)
 
             InsetsHelper.applyNavbarWorkaround(insets.bottom, binding.workaroundView)
-            ThemeHelper.setNavigationBarColor(
-                this,
-                MaterialColors.getColor(binding.appbarRiivolution, R.attr.colorSurface)
-            )
 
             windowInsets
         }

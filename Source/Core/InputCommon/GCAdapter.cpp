@@ -23,6 +23,7 @@
 #endif
 
 #include "Common/BitUtils.h"
+#include "Common/Config/Config.h"
 #include "Common/Event.h"
 #include "Common/Flag.h"
 #include "Common/Logging/Log.h"
@@ -58,14 +59,20 @@ namespace GCAdapter
 {
 #if GCADAPTER_USE_LIBUSB_IMPLEMENTATION
 
-constexpr unsigned int USB_TIMEOUT_MS = 16;
+constexpr unsigned int USB_TIMEOUT_MS = 100;
 
 static bool CheckDeviceAccess(libusb_device* device);
 static void AddGCAdapter(libusb_device* device);
 static void ResetRumbleLockNeeded();
 #endif
 
-static void Reset();
+enum class CalledFromReadThread
+{
+  No,
+  Yes,
+};
+
+static void Reset(CalledFromReadThread called_from_read_thread);
 static void Setup();
 static void ProcessInputPayload(const u8* data, std::size_t size);
 static void ReadThreadFunc();
@@ -99,9 +106,11 @@ enum class ControllerType : u8
 
 static std::array<u8, SerialInterface::MAX_SI_CHANNELS> s_controller_rumble;
 
-constexpr size_t CONTROLER_INPUT_PAYLOAD_EXPECTED_SIZE = 37;
-constexpr size_t CONTROLER_OUTPUT_INIT_PAYLOAD_SIZE = 1;
-constexpr size_t CONTROLER_OUTPUT_RUMBLE_PAYLOAD_SIZE = 5;
+constexpr size_t CONTROLLER_INPUT_PAYLOAD_EXPECTED_SIZE = 37;
+#if GCADAPTER_USE_LIBUSB_IMPLEMENTATION
+constexpr size_t CONTROLLER_OUTPUT_INIT_PAYLOAD_SIZE = 1;
+#endif
+constexpr size_t CONTROLLER_OUTPUT_RUMBLE_PAYLOAD_SIZE = 5;
 
 struct PortState
 {
@@ -115,11 +124,12 @@ struct PortState
 // Only access with s_mutex held!
 static std::array<PortState, SerialInterface::MAX_SI_CHANNELS> s_port_states;
 
-static std::array<u8, CONTROLER_OUTPUT_RUMBLE_PAYLOAD_SIZE> s_controller_write_payload;
+static std::array<u8, CONTROLLER_OUTPUT_RUMBLE_PAYLOAD_SIZE> s_controller_write_payload;
 static std::atomic<int> s_controller_write_payload_size{0};
 
 static std::thread s_read_adapter_thread;
 static Common::Flag s_read_adapter_thread_running;
+static Common::Flag s_read_adapter_thread_needs_joining;
 static std::thread s_write_adapter_thread;
 static Common::Flag s_write_adapter_thread_running;
 static Common::Event s_write_happened;
@@ -156,7 +166,7 @@ static u8 s_endpoint_out = 0;
 
 static u64 s_last_init = 0;
 
-static std::optional<size_t> s_config_callback_id = std::nullopt;
+static std::optional<Config::ConfigChangedCallbackID> s_config_callback_id = std::nullopt;
 
 static bool s_is_adapter_wanted = false;
 static std::array<bool, SerialInterface::MAX_SI_CHANNELS> s_config_rumble_enabled{};
@@ -208,16 +218,15 @@ static void ReadThreadFunc()
   while (s_read_adapter_thread_running.IsSet())
   {
 #if GCADAPTER_USE_LIBUSB_IMPLEMENTATION
-    std::array<u8, CONTROLER_INPUT_PAYLOAD_EXPECTED_SIZE> input_buffer;
+    std::array<u8, CONTROLLER_INPUT_PAYLOAD_EXPECTED_SIZE> input_buffer;
 
     int payload_size = 0;
 
     // slippi change: for poll rate display
     std::chrono::high_resolution_clock::time_point start =
         std::chrono::high_resolution_clock::now();
-    const int error =
-        libusb_interrupt_transfer(s_handle, s_endpoint_in, input_buffer.data(),
-                                  int(input_buffer.size()), &payload_size, USB_TIMEOUT_MS);
+    int error = libusb_interrupt_transfer(s_handle, s_endpoint_in, input_buffer.data(),
+                                          int(input_buffer.size()), &payload_size, USB_TIMEOUT_MS);
 
     // slippi change: for poll rate display
     std::chrono::high_resolution_clock::time_point now = std::chrono::high_resolution_clock::now();
@@ -241,6 +250,18 @@ static void ReadThreadFunc()
     {
       ERROR_LOG_FMT(CONTROLLERINTERFACE, "Read: libusb_interrupt_transfer failed: {}",
                     LibusbUtils::ErrorWrap(error));
+    }
+    if (error == LIBUSB_ERROR_IO)
+    {
+      // s_read_adapter_thread_running is cleared by the joiner, not the stopper.
+
+      // Reset the device, which may trigger a replug.
+      error = libusb_reset_device(s_handle);
+      ERROR_LOG_FMT(CONTROLLERINTERFACE, "Read: libusb_reset_device: {}",
+                    LibusbUtils::ErrorWrap(error));
+
+      // If error is nonzero, try fixing it next loop iteration. We can't easily return
+      // and cleanup program state without getting another thread to call Reset().
     }
 
     ProcessInputPayload(input_buffer.data(), payload_size);
@@ -309,7 +330,7 @@ static void WriteThreadFunc()
                       LibusbUtils::ErrorWrap(error));
       }
 #elif GCADAPTER_USE_ANDROID_IMPLEMENTATION
-      const jbyteArray jrumble_array = env->NewByteArray(CONTROLER_OUTPUT_RUMBLE_PAYLOAD_SIZE);
+      const jbyteArray jrumble_array = env->NewByteArray(CONTROLLER_OUTPUT_RUMBLE_PAYLOAD_SIZE);
       jbyte* const jrumble = env->GetByteArrayElements(jrumble_array, nullptr);
 
       {
@@ -341,7 +362,7 @@ static int HotplugCallback(libusb_context* ctx, libusb_device* dev, libusb_hotpl
   else if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT)
   {
     if (s_handle != nullptr && libusb_get_device(s_handle) == dev)
-      Reset();
+      Reset(CalledFromReadThread::No);
 
     // Reset a potential error status now that the adapter is unplugged
     if (s_status == AdapterStatus::Error)
@@ -449,11 +470,12 @@ void Init()
     return;
 #endif
 
-  if (Core::GetState() != Core::State::Uninitialized && Core::GetState() != Core::State::Starting)
+  auto& system = Core::System::GetInstance();
+  if (const Core::State state = Core::GetState(system);
+      state != Core::State::Uninitialized && state != Core::State::Starting)
   {
-    auto& system = Core::System::GetInstance();
     auto& core_timing = system.GetCoreTiming();
-    if ((core_timing.GetTicks() - s_last_init) < SystemTimers::GetTicksPerSecond())
+    if ((core_timing.GetTicks() - s_last_init) < system.GetSystemTimers().GetTicksPerSecond())
       return;
 
     s_last_init = core_timing.GetTicks();
@@ -544,8 +566,11 @@ static void Setup()
   s_detected = true;
 
   // Make sure the thread isn't in the middle of shutting down while starting a new one
-  if (s_read_adapter_thread_running.TestAndClear())
+  if (s_read_adapter_thread_needs_joining.TestAndClear() ||
+      s_read_adapter_thread_running.TestAndClear())
+  {
     s_read_adapter_thread.join();
+  }
 
   s_read_adapter_thread_running.Set(true);
   s_read_adapter_thread = std::thread(ReadThreadFunc);
@@ -602,7 +627,7 @@ static bool CheckDeviceAccess(libusb_device* device)
   if (ret == 1)  // 1: kernel driver is active
   {
     // On macos detaching would fail without root or entitlement.
-    // We assume user is using GCAdapterDriver and therefor don't want to detach anything
+    // We assume user is using GCAdapterDriver and therefore don't want to detach anything
 #if !defined(__APPLE__)
     ret = libusb_detach_kernel_driver(s_handle, 0);
     detach_failed =
@@ -657,8 +682,8 @@ static bool CheckDeviceAccess(libusb_device* device)
 
 static void AddGCAdapter(libusb_device* device)
 {
-  libusb_config_descriptor* config = nullptr;
-  if (const int error = libusb_get_config_descriptor(device, 0, &config); error != LIBUSB_SUCCESS)
+  auto [error, config] = LibusbUtils::MakeConfigDescriptor(device);
+  if (error != LIBUSB_SUCCESS)
   {
     WARN_LOG_FMT(CONTROLLERINTERFACE, "libusb_get_config_descriptor failed: {}",
                  LibusbUtils::ErrorWrap(error));
@@ -679,12 +704,12 @@ static void AddGCAdapter(libusb_device* device)
       }
     }
   }
+  config.reset();
 
   int size = 0;
-  std::array<u8, CONTROLER_OUTPUT_INIT_PAYLOAD_SIZE> payload = {0x13};
-  const int error =
-      libusb_interrupt_transfer(s_handle, s_endpoint_out, payload.data(),
-                                CONTROLER_OUTPUT_INIT_PAYLOAD_SIZE, &size, USB_TIMEOUT_MS);
+  std::array<u8, CONTROLLER_OUTPUT_INIT_PAYLOAD_SIZE> payload = {0x13};
+  error = libusb_interrupt_transfer(s_handle, s_endpoint_out, payload.data(),
+                                    CONTROLLER_OUTPUT_INIT_PAYLOAD_SIZE, &size, USB_TIMEOUT_MS);
   if (error != LIBUSB_SUCCESS)
   {
     WARN_LOG_FMT(CONTROLLERINTERFACE, "AddGCAdapter: libusb_interrupt_transfer failed: {}",
@@ -706,11 +731,11 @@ void Shutdown()
   StopScanThread();
 #if GCADAPTER_USE_LIBUSB_IMPLEMENTATION
 #if LIBUSB_API_HAS_HOTPLUG
-  if (s_libusb_context->IsValid() && s_libusb_hotplug_enabled)
+  if (s_libusb_context && s_libusb_context->IsValid() && s_libusb_hotplug_enabled)
     libusb_hotplug_deregister_callback(*s_libusb_context, s_hotplug_handle);
 #endif
 #endif
-  Reset();
+  Reset(CalledFromReadThread::No);
 
 #if GCADAPTER_USE_LIBUSB_IMPLEMENTATION
   s_libusb_context.reset();
@@ -724,7 +749,7 @@ void Shutdown()
   }
 }
 
-static void Reset()
+static void Reset(CalledFromReadThread called_from_read_thread)
 {
 #if GCADAPTER_USE_LIBUSB_IMPLEMENTATION
   std::unique_lock lock(s_init_mutex, std::defer_lock);
@@ -737,8 +762,16 @@ static void Reset()
     return;
 #endif
 
-  if (s_read_adapter_thread_running.TestAndClear())
-    s_read_adapter_thread.join();
+  if (called_from_read_thread == CalledFromReadThread::No)
+  {
+    if (s_read_adapter_thread_running.TestAndClear())
+      s_read_adapter_thread.join();
+  }
+  else
+  {
+    s_read_adapter_thread_needs_joining.Set();
+    s_read_adapter_thread_running.Clear();
+  }
   // The read thread will close the write thread
 
   s_port_states.fill({});
@@ -808,7 +841,7 @@ static ControllerType IdentifyControllerType(u8 data)
 
 void ProcessInputPayload(const u8* data, std::size_t size)
 {
-  if (size != CONTROLER_INPUT_PAYLOAD_EXPECTED_SIZE
+  if (size != CONTROLLER_INPUT_PAYLOAD_EXPECTED_SIZE
 #if GCADAPTER_USE_LIBUSB_IMPLEMENTATION
       || data[0] != LIBUSB_DT_HID
 #endif
@@ -818,7 +851,7 @@ void ProcessInputPayload(const u8* data, std::size_t size)
     ERROR_LOG_FMT(CONTROLLERINTERFACE, "error reading payload (size: {}, type: {:02x})", size,
                   data[0]);
 #if GCADAPTER_USE_ANDROID_IMPLEMENTATION
-    Reset();
+    Reset(CalledFromReadThread::Yes);
 #endif
   }
   else
@@ -923,11 +956,11 @@ void ResetRumble()
     return;
   ResetRumbleLockNeeded();
 #elif GCADAPTER_USE_ANDROID_IMPLEMENTATION
-  std::array<u8, CONTROLER_OUTPUT_RUMBLE_PAYLOAD_SIZE> rumble = {0x11, 0, 0, 0, 0};
+  std::array<u8, CONTROLLER_OUTPUT_RUMBLE_PAYLOAD_SIZE> rumble = {0x11, 0, 0, 0, 0};
   {
     std::lock_guard lk(s_write_mutex);
     s_controller_write_payload = rumble;
-    s_controller_write_payload_size.store(CONTROLER_OUTPUT_RUMBLE_PAYLOAD_SIZE);
+    s_controller_write_payload_size.store(CONTROLLER_OUTPUT_RUMBLE_PAYLOAD_SIZE);
   }
   s_write_happened.Set();
 #endif
@@ -943,16 +976,16 @@ static void ResetRumbleLockNeeded()
     return;
   }
 
-  std::fill(std::begin(s_controller_rumble), std::end(s_controller_rumble), 0);
+  s_controller_rumble.fill(0);
 
-  std::array<u8, CONTROLER_OUTPUT_RUMBLE_PAYLOAD_SIZE> rumble = {
+  std::array<u8, CONTROLLER_OUTPUT_RUMBLE_PAYLOAD_SIZE> rumble = {
       0x11, s_controller_rumble[0], s_controller_rumble[1], s_controller_rumble[2],
       s_controller_rumble[3]};
 
   int size = 0;
   const int error =
       libusb_interrupt_transfer(s_handle, s_endpoint_out, rumble.data(),
-                                CONTROLER_OUTPUT_RUMBLE_PAYLOAD_SIZE, &size, USB_TIMEOUT_MS);
+                                CONTROLLER_OUTPUT_RUMBLE_PAYLOAD_SIZE, &size, USB_TIMEOUT_MS);
   if (error != LIBUSB_SUCCESS)
   {
     WARN_LOG_FMT(CONTROLLERINTERFACE, "ResetRumbleLockNeeded: libusb_interrupt_transfer failed: {}",
@@ -981,7 +1014,7 @@ void Output(int chan, u8 rumble_command)
       s_port_states[chan].controller_type != ControllerType::Wireless)
   {
     s_controller_rumble[chan] = rumble_command;
-    std::array<u8, CONTROLER_OUTPUT_RUMBLE_PAYLOAD_SIZE> rumble = {
+    std::array<u8, CONTROLLER_OUTPUT_RUMBLE_PAYLOAD_SIZE> rumble = {
         0x11, s_controller_rumble[0], s_controller_rumble[1], s_controller_rumble[2],
         s_controller_rumble[3]};
     {
@@ -989,7 +1022,7 @@ void Output(int chan, u8 rumble_command)
       std::lock_guard lk(s_write_mutex);
 #endif
       s_controller_write_payload = rumble;
-      s_controller_write_payload_size.store(CONTROLER_OUTPUT_RUMBLE_PAYLOAD_SIZE);
+      s_controller_write_payload_size.store(CONTROLLER_OUTPUT_RUMBLE_PAYLOAD_SIZE);
     }
     s_write_happened.Set();
   }

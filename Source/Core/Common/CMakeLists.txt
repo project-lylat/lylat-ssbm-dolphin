@@ -3,11 +3,24 @@ include_directories(${CMAKE_SOURCE_DIR}/Externals/SlippiRustExtensions/ffi/inclu
 add_library(common
   Analytics.cpp
   Analytics.h
+  Assembler/AssemblerShared.cpp
+  Assembler/AssemblerShared.h
+  Assembler/AssemblerTables.cpp
+  Assembler/AssemblerTables.h
+  Assembler/GekkoAssembler.cpp
+  Assembler/GekkoAssembler.h
+  Assembler/GekkoIRGen.cpp
+  Assembler/GekkoIRGen.h
+  Assembler/GekkoLexer.cpp
+  Assembler/GekkoLexer.h
+  Assembler/GekkoParser.cpp
+  Assembler/GekkoParser.h
   Assert.h
   BitField.h
   BitSet.h
   BitUtils.h
   BlockingLoop.h
+  Buffer.h
   ChunkFile.h
   CodeBlock.h
   ColorUtil.cpp
@@ -24,6 +37,7 @@ add_library(common
   Config/Enums.h
   Config/Layer.cpp
   Config/Layer.h
+  Contains.h
   CPUDetect.h
   Crypto/AES.cpp
   Crypto/AES.h
@@ -31,22 +45,22 @@ add_library(common
   Crypto/bn.h
   Crypto/ec.cpp
   Crypto/ec.h
+  Crypto/HMAC.cpp
+  Crypto/HMAC.h
   Crypto/SHA1.cpp
   Crypto/SHA1.h
-  Debug/CodeTrace.cpp
-  Debug/CodeTrace.h
   Debug/MemoryPatches.cpp
   Debug/MemoryPatches.h
   Debug/Threads.h
   Debug/Watches.cpp
   Debug/Watches.h
-  DebugInterface.h
   DynamicLibrary.cpp
   DynamicLibrary.h
-  ENetUtil.cpp
-  ENetUtil.h
+  ENet.cpp
+  ENet.h
   EnumFormatter.h
   EnumMap.h
+  EnumUtils.h
   Event.h
   FatFsUtil.cpp
   FatFsUtil.h
@@ -58,6 +72,7 @@ add_library(common
   Flag.h
   FloatUtils.cpp
   FloatUtils.h
+  Functional.h
   FormatUtil.h
   FPURoundMode.h
   GekkoDisassembler.cpp
@@ -65,6 +80,8 @@ add_library(common
   Hash.cpp
   Hash.h
   HookableEvent.h
+  HostDisassembler.cpp
+  HostDisassembler.h
   HttpRequest.cpp
   HttpRequest.h
   Image.cpp
@@ -76,13 +93,14 @@ add_library(common
   IOFile.h
   JitRegister.cpp
   JitRegister.h
+  JsonUtil.h
+  JsonUtil.cpp
   Lazy.h
   LinearDiskCache.h
   Logging/ConsoleListener.h
   Logging/Log.h
   Logging/LogManager.cpp
   Logging/LogManager.h
-  MathUtil.cpp
   MathUtil.h
   Matrix.cpp
   Matrix.h
@@ -98,10 +116,9 @@ add_library(common
   Network.h
   PcapFile.cpp
   PcapFile.h
-  PerformanceCounter.cpp
-  PerformanceCounter.h
   Profiler.cpp
   Profiler.h
+  Projection.h
   QoSSession.cpp
   QoSSession.h
   Random.cpp
@@ -115,8 +132,10 @@ add_library(common
   SettingsHandler.h
   SFMLHelper.cpp
   SFMLHelper.h
+  SmallVector.h
   SocketContext.cpp
   SocketContext.h
+  SpanUtils.h
   SPSCQueue.h
   StringLiteral.h
   StringUtil.cpp
@@ -127,18 +146,24 @@ add_library(common
   Thread.h
   Timer.cpp
   Timer.h
+  TimeUtil.cpp
+  TimeUtil.h
   TraversalClient.cpp
   TraversalClient.h
   TraversalProto.h
   TypeUtils.h
+  Unreachable.h
   UPnP.cpp
   UPnP.h
   VariantUtil.h
   Version.cpp
   Version.h
+  WaitableFlag.h
   WindowSystemInfo.h
   WorkQueueThread.h
 )
+
+add_dependencies(common dolphin_scmrev)
 
 if(NOT MSVC AND _M_ARM_64)
   set_source_files_properties(
@@ -150,19 +175,25 @@ endif()
 target_link_libraries(common
 PUBLIC
   ${CMAKE_THREAD_LIBS_INIT}
-  enet
+  enet::enet
   fmt::fmt
-  ${MBEDTLS_LIBRARIES}
-  minizip-ng
-  slippi-rust-extensions
+  MbedTLS::mbedtls
+  minizip::minizip
+  sfml-network
+  slippi_rust_extensions
 
 PRIVATE
-  ${CURL_LIBRARIES}
+  CURL::libcurl
   FatFs
-  ${ICONV_LIBRARIES}
-  ${spng_target}
+  Iconv::Iconv
+  spng::spng
   ${VTUNE_LIBRARIES}
 )
+
+if ((DEFINED CMAKE_ANDROID_ARCH_ABI AND CMAKE_ANDROID_ARCH_ABI MATCHES "x86|x86_64") OR
+    (NOT DEFINED CMAKE_ANDROID_ARCH_ABI AND _M_X86_64))
+  target_link_libraries(common PRIVATE bdisasm)
+endif()
 
 if (APPLE)
   target_link_libraries(common
@@ -204,6 +235,11 @@ elseif(WIN32)
     Logging/ConsoleListenerWin.cpp
     MemArenaWin.cpp
   )
+elseif(APPLE)
+  target_sources(common PRIVATE
+    Logging/ConsoleListenerNix.cpp
+    MemArenaDarwin.cpp
+  )
 else()
   target_sources(common PRIVATE
     Logging/ConsoleListenerNix.cpp
@@ -220,7 +256,7 @@ if(_M_ARM_64)
     ArmFPURoundMode.cpp
   )
 else()
-  if(_M_X86) #X86
+  if(_M_X86_64) #X86
     target_sources(common PRIVATE
       x64ABI.cpp
       x64ABI.h
@@ -302,7 +338,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_libraries(common PUBLIC dl rt)
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+if(WIN32)
   target_sources(common PRIVATE HRWrap.h HRWrap.cpp)
 endif()
 
@@ -314,10 +350,32 @@ if(OPROFILE_FOUND)
   target_link_libraries(common PRIVATE OProfile::OProfile)
 endif()
 
+if(ENABLE_LLVM)
+  find_package(LLVM CONFIG)
+  if(LLVM_FOUND)
+    message(STATUS "LLVM found, enabling LLVM support in disassembler")
+    target_compile_definitions(common PRIVATE HAVE_LLVM)
+    # Minimal documentation about LLVM's CMake functions is available here:
+    # https://releases.llvm.org/16.0.0/docs/CMake.html#embedding-llvm-in-your-project
+    # https://groups.google.com/g/llvm-dev/c/YeEVe7HTasQ?pli=1
+    #
+    # However, you have to read the source code in any case.
+    # Look for LLVM-Config.cmake in your (Unix) system:
+    # $ find /usr -name LLVM-Config\\.cmake 2>/dev/null
+    llvm_expand_pseudo_components(LLVM_EXPAND_COMPONENTS
+      AllTargetsInfos AllTargetsDisassemblers AllTargetsCodeGens
+    )
+    llvm_config(common USE_SHARED
+      mcdisassembler target ${LLVM_EXPAND_COMPONENTS}
+    )
+    target_include_directories(common PRIVATE ${LLVM_INCLUDE_DIRS})
+  endif()
+endif()
+
 if(UNIX)
   # Posix networking code needs to be fixed for Windows
   add_executable(traversal_server TraversalServer.cpp)
-  target_link_libraries(traversal_server PRIVATE common)
+  target_link_libraries(traversal_server PRIVATE common fmt::fmt)
   if(SYSTEMD_FOUND)
     target_link_libraries(traversal_server PRIVATE ${SYSTEMD_LIBRARIES})
   endif()

@@ -120,47 +120,45 @@ void BlendingState::Generate(const BPMemory& bp)
   const bool dstalpha = bp.dstalpha.enable && alphaupdate;
   usedualsrc = true;
 
-  // The subtract bit has the highest priority
-  if (bp.blendmode.subtract)
+  if (bp.blendmode.blendenable)
   {
-    blendenable = true;
-    subtractAlpha = subtract = true;
-    srcfactoralpha = srcfactor = SrcBlendFactor::One;
-    dstfactoralpha = dstfactor = DstBlendFactor::One;
-
-    if (dstalpha)
+    if (bp.blendmode.subtract)
     {
-      subtractAlpha = false;
-      srcfactoralpha = SrcBlendFactor::One;
-      dstfactoralpha = DstBlendFactor::Zero;
+      blendenable = true;
+      subtractAlpha = subtract = true;
+      srcfactoralpha = srcfactor = SrcBlendFactor::One;
+      dstfactoralpha = dstfactor = DstBlendFactor::One;
+
+      if (dstalpha)
+      {
+        subtractAlpha = false;
+        srcfactoralpha = SrcBlendFactor::One;
+        dstfactoralpha = DstBlendFactor::Zero;
+      }
+    }
+    else
+    {
+      blendenable = true;
+      srcfactor = bp.blendmode.srcfactor;
+      dstfactor = bp.blendmode.dstfactor;
+      if (!target_has_alpha)
+      {
+        // uses ONE instead of DSTALPHA
+        srcfactor = RemoveDstAlphaUsage(srcfactor);
+        dstfactor = RemoveDstAlphaUsage(dstfactor);
+      }
+      // replaces SrcClr with SrcAlpha and DstClr with DstAlpha, it is important to
+      // use the dst function for the src factor and vice versa
+      srcfactoralpha = RemoveDstColorUsage(srcfactor);
+      dstfactoralpha = RemoveSrcColorUsage(dstfactor);
+
+      if (dstalpha)
+      {
+        srcfactoralpha = SrcBlendFactor::One;
+        dstfactoralpha = DstBlendFactor::Zero;
+      }
     }
   }
-
-  // The blendenable bit has the middle priority
-  else if (bp.blendmode.blendenable)
-  {
-    blendenable = true;
-    srcfactor = bp.blendmode.srcfactor;
-    dstfactor = bp.blendmode.dstfactor;
-    if (!target_has_alpha)
-    {
-      // uses ONE instead of DSTALPHA
-      srcfactor = RemoveDstAlphaUsage(srcfactor);
-      dstfactor = RemoveDstAlphaUsage(dstfactor);
-    }
-    // replaces SrcClr with SrcAlpha and DstClr with DstAlpha, it is important to
-    // use the dst function for the src factor and vice versa
-    srcfactoralpha = RemoveDstColorUsage(srcfactor);
-    dstfactoralpha = RemoveSrcColorUsage(dstfactor);
-
-    if (dstalpha)
-    {
-      srcfactoralpha = SrcBlendFactor::One;
-      dstfactoralpha = DstBlendFactor::Zero;
-    }
-  }
-
-  // The logicop bit has the lowest priority
   else if (bp.blendmode.logicopenable)
   {
     if (bp.blendmode.logicmode == LogicOp::NoOp)
@@ -311,10 +309,15 @@ void SamplerState::Generate(const BPMemory& bp, u32 index)
   };
   tm0.wrap_u = filter_invalid_wrap(bp_tm0.wrap_s);
   tm0.wrap_v = filter_invalid_wrap(bp_tm0.wrap_t);
+  if (bp_tm0.max_aniso == MaxAniso::Two)
+    tm0.anisotropic_filtering = 1;
+  else if (bp_tm0.max_aniso == MaxAniso::Four)
+    tm0.anisotropic_filtering = 2;
+  else
+    tm0.anisotropic_filtering = 0;
 
   tm0.diag_lod = bp_tm0.diag_lod;
-  tm0.anisotropic_filtering = false;  // TODO: Respect BP anisotropic filtering mode
-  tm0.lod_clamp = bp_tm0.lod_clamp;   // TODO: What does this do?
+  tm0.lod_clamp = bp_tm0.lod_clamp;  // TODO: What does this do?
 }
 
 namespace RenderState
@@ -453,6 +456,7 @@ FramebufferState GetColorFramebufferState(AbstractTextureFormat format)
   state.depth_texture_format = AbstractTextureFormat::Undefined;
   state.per_sample_shading = false;
   state.samples = 1;
+  state.additional_color_attachment_count = 0;
   return state;
 }
 

@@ -30,8 +30,8 @@ import java.util.Set;
 public final class FileBrowserHelper
 {
   public static final HashSet<String> GAME_EXTENSIONS = new HashSet<>(Arrays.asList(
-          "gcm", "tgc", "iso", "ciso", "gcz", "wbfs", "wia", "rvz", "nfs", "wad", "dol", "elf",
-          "json"));
+          "gcm", "tgc", "bin", "iso", "ciso", "gcz", "wbfs", "wia", "rvz", "nfs", "wad", "dol",
+          "elf", "json"));
 
   public static final HashSet<String> GAME_LIKE_EXTENSIONS = new HashSet<>(GAME_EXTENSIONS);
 
@@ -79,7 +79,7 @@ public final class FileBrowserHelper
 
   public static boolean isPathEmptyOrValid(StringSetting path)
   {
-    return isPathEmptyOrValid(path.getStringGlobal());
+    return isPathEmptyOrValid(path.getString());
   }
 
   /**

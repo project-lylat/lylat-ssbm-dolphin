@@ -11,11 +11,18 @@
 #include <optional>
 #include <string>
 
+#ifdef USE_RETRO_ACHIEVEMENTS
+#include "Common/Config/Config.h"
+#endif  // USE_RETRO_ACHIEVEMENTS
+
 #include "Core/Boot/Boot.h"
 
+class QMenu;
 class QStackedWidget;
 class QString;
 
+class AchievementsWindow;
+class AssemblerWidget;
 class BreakpointWidget;
 struct BootParameters;
 class CheatsManager;
@@ -30,6 +37,7 @@ class GBATASInputWindow;
 class GCTASInputWindow;
 class GraphicsWindow;
 class HotkeyScheduler;
+class InfinityBaseWindow;
 class JITWidget;
 class LogConfigWidget;
 class LogWidget;
@@ -48,6 +56,13 @@ class ThreadWidget;
 class ToolBar;
 class WatchWidget;
 class WiiTASInputWindow;
+class WiiSpeakWindow;
+struct WindowSystemInfo;
+
+namespace Core
+{
+class System;
+}
 
 namespace DiscIO
 {
@@ -69,13 +84,14 @@ class MainWindow final : public QMainWindow
   Q_OBJECT
 
 public:
-  explicit MainWindow(std::unique_ptr<BootParameters> boot_parameters,
+  explicit MainWindow(Core::System& system, std::unique_ptr<BootParameters> boot_parameters,
                       const std::string& movie_path);
   ~MainWindow();
 
-  void Show();
+  WindowSystemInfo GetWindowSystemInfo() const;
 
   bool eventFilter(QObject* object, QEvent* event) override;
+  QMenu* createPopupMenu() override;
 
 signals:
   void ReadOnlyModeChanged(bool read_only);
@@ -161,10 +177,18 @@ private:
   void ShowNetPlayBrowser();
   void ShowFIFOPlayer();
   void ShowSkylanderPortal();
+  void ShowInfinityBase();
+  void ShowWiiSpeakWindow();
   void ShowMemcardManager();
   void ShowResourcePackManager();
   void ShowCheatsManager();
   void ShowRiivolutionBootWidget(const UICommon::GameFile& game);
+
+#ifdef USE_RETRO_ACHIEVEMENTS
+  void ShowAchievementsWindow();
+  void ShowAchievementSettings();
+  void OnHardcoreChanged();
+#endif  // USE_RETRO_ACHIEVEMENTS
 
   void NetPlayInit();
   bool NetPlayJoin();
@@ -201,6 +225,8 @@ private:
   void dropEvent(QDropEvent* event) override;
   QSize sizeHint() const override;
 
+  Core::System& m_system;
+
 #ifdef HAVE_XRANDR
   std::unique_ptr<X11Utils::XRRConfiguration> m_xrr_config;
 #endif
@@ -225,6 +251,8 @@ private:
   GraphicsWindow* m_graphics_window = nullptr;
   FIFOPlayerWindow* m_fifo_window = nullptr;
   SkylanderPortalWindow* m_skylander_window = nullptr;
+  InfinityBaseWindow* m_infinity_window = nullptr;
+  WiiSpeakWindow* m_wii_speak_window = nullptr;
   MappingWindow* m_hotkey_window = nullptr;
   FreeLookWindow* m_freelook_window = nullptr;
 
@@ -238,6 +266,12 @@ private:
   static constexpr int num_wii_controllers = 4;
   std::array<WiiTASInputWindow*, num_wii_controllers> m_wii_tas_input_windows{};
 
+#ifdef USE_RETRO_ACHIEVEMENTS
+  AchievementsWindow* m_achievements_window = nullptr;
+  Config::ConfigChangedCallbackID m_config_changed_callback_id;
+#endif  // USE_RETRO_ACHIEVEMENTS
+
+  AssemblerWidget* m_assembler_widget;
   BreakpointWidget* m_breakpoint_widget;
   CodeWidget* m_code_widget;
   JITWidget* m_jit_widget;

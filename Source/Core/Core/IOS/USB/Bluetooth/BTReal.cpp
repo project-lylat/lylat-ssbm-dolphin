@@ -19,6 +19,7 @@
 #include <libusb.h>
 
 #include "Common/ChunkFile.h"
+#include "Common/EnumUtils.h"
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
 #include "Common/Network.h"
@@ -28,6 +29,7 @@
 #include "Core/Core.h"
 #include "Core/HW/Memmap.h"
 #include "Core/IOS/Device.h"
+#include "Core/IOS/USB/Host.h"
 #include "Core/System.h"
 #include "VideoCommon/OnScreenDisplay.h"
 
@@ -37,30 +39,20 @@ constexpr u8 REQUEST_TYPE = static_cast<u8>(LIBUSB_ENDPOINT_OUT) |
                             static_cast<u8>(LIBUSB_REQUEST_TYPE_CLASS) |
                             static_cast<u8>(LIBUSB_RECIPIENT_INTERFACE);
 
-static bool IsWantedDevice(const libusb_device_descriptor& descriptor)
-{
-  const int vid = Config::Get(Config::MAIN_BLUETOOTH_PASSTHROUGH_VID);
-  const int pid = Config::Get(Config::MAIN_BLUETOOTH_PASSTHROUGH_PID);
-  if (vid == -1 || pid == -1)
-    return true;
-  return descriptor.idVendor == vid && descriptor.idProduct == pid;
-}
-
-static bool IsBluetoothDevice(const libusb_interface_descriptor& descriptor)
+static bool IsBluetoothDevice(const libusb_device_descriptor& descriptor)
 {
   constexpr u8 SUBCLASS = 0x01;
   constexpr u8 PROTOCOL_BLUETOOTH = 0x01;
-  if (Config::Get(Config::MAIN_BLUETOOTH_PASSTHROUGH_VID) != -1 &&
-      Config::Get(Config::MAIN_BLUETOOTH_PASSTHROUGH_PID) != -1)
-  {
-    return true;
-  }
-  return descriptor.bInterfaceClass == LIBUSB_CLASS_WIRELESS &&
-         descriptor.bInterfaceSubClass == SUBCLASS &&
-         descriptor.bInterfaceProtocol == PROTOCOL_BLUETOOTH;
+  // Some devices misreport their class, so we avoid relying solely on descriptor checks and allow
+  // users to specify their own VID/PID.
+  return BluetoothRealDevice::IsConfiguredBluetoothDevice(descriptor.idVendor,
+                                                          descriptor.idProduct) ||
+         (descriptor.bDeviceClass == LIBUSB_CLASS_WIRELESS &&
+          descriptor.bDeviceSubClass == SUBCLASS &&
+          descriptor.bDeviceProtocol == PROTOCOL_BLUETOOTH);
 }
 
-BluetoothRealDevice::BluetoothRealDevice(Kernel& ios, const std::string& device_name)
+BluetoothRealDevice::BluetoothRealDevice(EmulationKernel& ios, const std::string& device_name)
     : BluetoothBaseDevice(ios, device_name)
 {
   LoadLinkKeys();
@@ -79,6 +71,13 @@ BluetoothRealDevice::~BluetoothRealDevice()
     libusb_unref_device(m_device);
   }
   SaveLinkKeys();
+}
+
+bool BluetoothRealDevice::IsConfiguredBluetoothDevice(u16 vid, u16 pid)
+{
+  const int configured_vid = Config::Get(Config::MAIN_BLUETOOTH_PASSTHROUGH_VID);
+  const int configured_pid = Config::Get(Config::MAIN_BLUETOOTH_PASSTHROUGH_PID);
+  return configured_vid == vid && configured_pid == pid;
 }
 
 std::optional<IPCReply> BluetoothRealDevice::Open(const OpenRequest& request)
@@ -100,9 +99,7 @@ std::optional<IPCReply> BluetoothRealDevice::Open(const OpenRequest& request)
       return true;
     }
 
-    const libusb_interface& interface = config_descriptor->interface[INTERFACE];
-    const libusb_interface_descriptor& descriptor = interface.altsetting[0];
-    if (IsBluetoothDevice(descriptor) && IsWantedDevice(device_descriptor) && OpenDevice(device))
+    if (IsBluetoothDevice(device_descriptor) && OpenDevice(device_descriptor, device))
     {
       unsigned char manufacturer[50] = {}, product[50] = {}, serial_number[50] = {};
       const int manufacturer_ret = libusb_get_string_descriptor_ascii(
@@ -176,7 +173,7 @@ std::optional<IPCReply> BluetoothRealDevice::Open(const OpenRequest& request)
           "The emulated console will now stop.",
           m_last_open_error);
     }
-    Core::QueueHostJob(Core::Stop);
+    Core::QueueHostJob(&Core::Stop);
     return IPCReply(IPC_ENOENT);
   }
 
@@ -214,11 +211,11 @@ std::optional<IPCReply> BluetoothRealDevice::IOCtlV(const IOCtlVRequest& request
   // HCI commands to the Bluetooth adapter
   case USB::IOCTLV_USBV0_CTRLMSG:
   {
-    auto& system = Core::System::GetInstance();
+    auto& system = GetSystem();
     auto& memory = system.GetMemory();
 
     std::lock_guard lk(m_transfers_mutex);
-    auto cmd = std::make_unique<USB::V0CtrlMessage>(m_ios, request);
+    auto cmd = std::make_unique<USB::V0CtrlMessage>(GetEmulationKernel(), request);
     const u16 opcode = Common::swap16(memory.Read_U16(cmd->data_address));
     if (opcode == HCI_CMD_READ_BUFFER_SIZE)
     {
@@ -263,7 +260,7 @@ std::optional<IPCReply> BluetoothRealDevice::IOCtlV(const IOCtlVRequest& request
   case USB::IOCTLV_USBV0_INTRMSG:
   {
     std::lock_guard lk(m_transfers_mutex);
-    auto cmd = std::make_unique<USB::V0IntrMessage>(m_ios, request);
+    auto cmd = std::make_unique<USB::V0IntrMessage>(GetEmulationKernel(), request);
     if (request.request == USB::IOCTLV_USBV0_INTRMSG)
     {
       if (m_sync_button_state == SyncButtonState::Pressed)
@@ -347,8 +344,9 @@ void BluetoothRealDevice::DoState(PointerWrap& p)
     // On load, discard any pending transfer to make sure the emulated software is not stuck
     // waiting for the previous request to complete. This is usually not an issue as long as
     // the Bluetooth state is the same (same Wii Remote connections).
+    auto& system = GetSystem();
     for (const auto& address_to_discard : addresses_to_discard)
-      m_ios.EnqueueIPCReply(Request{address_to_discard}, 0);
+      GetEmulationKernel().EnqueueIPCReply(Request{system, address_to_discard}, 0);
 
     // Prevent the callbacks from replying to a request that has already been discarded.
     m_current_transfers.clear();
@@ -479,9 +477,9 @@ bool BluetoothRealDevice::SendHCIStoreLinkKeyCommand()
   auto iterator = packet.begin() + sizeof(hci_cmd_hdr_t) + sizeof(hci_write_stored_link_key_cp);
   for (const auto& entry : m_link_keys)
   {
-    std::copy(entry.first.begin(), entry.first.end(), iterator);
+    std::ranges::copy(entry.first, iterator);
     iterator += entry.first.size();
-    std::copy(entry.second.begin(), entry.second.end(), iterator);
+    std::ranges::copy(entry.second, iterator);
     iterator += entry.second.size();
   }
 
@@ -494,7 +492,7 @@ bool BluetoothRealDevice::SendHCIStoreLinkKeyCommand()
 
 void BluetoothRealDevice::FakeVendorCommandReply(USB::V0IntrMessage& ctrl)
 {
-  auto& system = Core::System::GetInstance();
+  auto& system = GetSystem();
   auto& memory = system.GetMemory();
 
   SHCIEventCommand hci_event;
@@ -504,7 +502,7 @@ void BluetoothRealDevice::FakeVendorCommandReply(USB::V0IntrMessage& ctrl)
   hci_event.PacketIndicator = 0x01;
   hci_event.Opcode = m_fake_vendor_command_reply_opcode;
   memory.CopyToEmu(ctrl.data_address, &hci_event, sizeof(hci_event));
-  m_ios.EnqueueIPCReply(ctrl.ios_request, static_cast<s32>(sizeof(hci_event)));
+  GetEmulationKernel().EnqueueIPCReply(ctrl.ios_request, static_cast<s32>(sizeof(hci_event)));
 }
 
 // Due to how the widcomm stack which Nintendo uses is coded, we must never
@@ -514,7 +512,7 @@ void BluetoothRealDevice::FakeVendorCommandReply(USB::V0IntrMessage& ctrl)
 // (including Wiimote disconnects and "event mismatch" warning messages).
 void BluetoothRealDevice::FakeReadBufferSizeReply(USB::V0IntrMessage& ctrl)
 {
-  auto& system = Core::System::GetInstance();
+  auto& system = GetSystem();
   auto& memory = system.GetMemory();
 
   SHCIEventCommand hci_event;
@@ -532,13 +530,14 @@ void BluetoothRealDevice::FakeReadBufferSizeReply(USB::V0IntrMessage& ctrl)
   reply.max_sco_size = SCO_PKT_SIZE;
   reply.num_sco_pkts = SCO_PKT_NUM;
   memory.CopyToEmu(ctrl.data_address + sizeof(hci_event), &reply, sizeof(reply));
-  m_ios.EnqueueIPCReply(ctrl.ios_request, static_cast<s32>(sizeof(hci_event) + sizeof(reply)));
+  GetEmulationKernel().EnqueueIPCReply(ctrl.ios_request,
+                                       static_cast<s32>(sizeof(hci_event) + sizeof(reply)));
 }
 
 void BluetoothRealDevice::FakeSyncButtonEvent(USB::V0IntrMessage& ctrl, const u8* payload,
                                               const u8 size)
 {
-  auto& system = Core::System::GetInstance();
+  auto& system = GetSystem();
   auto& memory = system.GetMemory();
 
   hci_event_hdr_t hci_event;
@@ -547,7 +546,8 @@ void BluetoothRealDevice::FakeSyncButtonEvent(USB::V0IntrMessage& ctrl, const u8
   hci_event.length = size;
   memory.CopyToEmu(ctrl.data_address, &hci_event, sizeof(hci_event));
   memory.CopyToEmu(ctrl.data_address + sizeof(hci_event), payload, size);
-  m_ios.EnqueueIPCReply(ctrl.ios_request, static_cast<s32>(sizeof(hci_event) + size));
+  GetEmulationKernel().EnqueueIPCReply(ctrl.ios_request,
+                                       static_cast<s32>(sizeof(hci_event) + size));
 }
 
 // When the red sync button is pressed, a HCI event is generated:
@@ -593,7 +593,7 @@ void BluetoothRealDevice::LoadLinkKeys()
     }
 
     auto& mac = address.value();
-    std::reverse(mac.begin(), mac.end());
+    std::ranges::reverse(mac);
 
     const std::string& key_string = pair.substr(index + 1);
     linkkey_t key{};
@@ -616,7 +616,7 @@ void BluetoothRealDevice::SaveLinkKeys()
   {
     bdaddr_t address;
     // Reverse the address so that it is stored in the correct order in the config file
-    std::reverse_copy(entry.first.begin(), entry.first.end(), address.begin());
+    std::ranges::reverse_copy(entry.first, address.begin());
     oss << Common::MacAddressToString(address);
     oss << '=';
     oss << std::hex;
@@ -633,14 +633,16 @@ void BluetoothRealDevice::SaveLinkKeys()
   Config::SetBase(Config::MAIN_BLUETOOTH_PASSTHROUGH_LINK_KEYS, config_string);
 }
 
-bool BluetoothRealDevice::OpenDevice(libusb_device* device)
+bool BluetoothRealDevice::OpenDevice(const libusb_device_descriptor& device_descriptor,
+                                     libusb_device* device)
 {
   m_device = libusb_ref_device(device);
   const int ret = libusb_open(m_device, &m_handle);
   if (ret != LIBUSB_SUCCESS)
   {
-    m_last_open_error =
-        Common::FmtFormatT("Failed to open Bluetooth device: {0}", LibusbUtils::ErrorWrap(ret));
+    m_last_open_error = Common::FmtFormatT("Failed to open Bluetooth device {:04x}:{:04x}: {}",
+                                           device_descriptor.idVendor, device_descriptor.idProduct,
+                                           LibusbUtils::ErrorWrap(ret));
     return false;
   }
 
@@ -670,17 +672,53 @@ bool BluetoothRealDevice::OpenDevice(libusb_device* device)
   return true;
 }
 
+std::vector<BluetoothRealDevice::BluetoothDeviceInfo> BluetoothRealDevice::ListDevices()
+{
+  std::vector<BluetoothDeviceInfo> device_list;
+  LibusbUtils::Context context;
+
+  if (!context.IsValid())
+    return {};
+
+  int result = context.GetDeviceList([&device_list](libusb_device* device) {
+    libusb_device_descriptor desc;
+
+    auto [config_ret, config] = LibusbUtils::MakeConfigDescriptor(device, 0);
+    if (config_ret != LIBUSB_SUCCESS)
+      return true;
+
+    if (libusb_get_device_descriptor(device, &desc) != LIBUSB_SUCCESS)
+      return true;
+
+    if (IsBluetoothDevice(desc))
+    {
+      const std::string device_name =
+          USBHost::GetDeviceNameFromVIDPID(desc.idVendor, desc.idProduct);
+      device_list.push_back({desc.idVendor, desc.idProduct, device_name});
+    }
+    return true;
+  });
+
+  if (result < 0)
+  {
+    ERROR_LOG_FMT(IOS_USB, "Failed to get device list: {}", LibusbUtils::ErrorWrap(result));
+    return device_list;
+  }
+
+  return device_list;
+}
+
 // The callbacks are called from libusb code on a separate thread.
 void BluetoothRealDevice::HandleCtrlTransfer(libusb_transfer* tr)
 {
   std::lock_guard lk(m_transfers_mutex);
-  if (!m_current_transfers.count(tr))
+  if (!m_current_transfers.contains(tr))
     return;
 
   if (tr->status != LIBUSB_TRANSFER_COMPLETED && tr->status != LIBUSB_TRANSFER_NO_DEVICE)
   {
     ERROR_LOG_FMT(IOS_WIIMOTE, "libusb command transfer failed, status: {:#04x}",
-                  static_cast<u32>(tr->status));
+                  Common::ToUnderlying(tr->status));
     if (!m_showed_failed_transfer.IsSet())
     {
       Core::DisplayMessage("Failed to send a command to the Bluetooth adapter.", 10000);
@@ -694,21 +732,22 @@ void BluetoothRealDevice::HandleCtrlTransfer(libusb_transfer* tr)
   }
   const auto& command = m_current_transfers.at(tr).command;
   command->FillBuffer(libusb_control_transfer_get_data(tr), tr->actual_length);
-  m_ios.EnqueueIPCReply(command->ios_request, tr->actual_length, 0, CoreTiming::FromThread::ANY);
+  GetEmulationKernel().EnqueueIPCReply(command->ios_request, tr->actual_length, 0,
+                                       CoreTiming::FromThread::ANY);
   m_current_transfers.erase(tr);
 }
 
 void BluetoothRealDevice::HandleBulkOrIntrTransfer(libusb_transfer* tr)
 {
   std::lock_guard lk(m_transfers_mutex);
-  if (!m_current_transfers.count(tr))
+  if (!m_current_transfers.contains(tr))
     return;
 
   if (tr->status != LIBUSB_TRANSFER_COMPLETED && tr->status != LIBUSB_TRANSFER_TIMED_OUT &&
       tr->status != LIBUSB_TRANSFER_NO_DEVICE)
   {
     ERROR_LOG_FMT(IOS_WIIMOTE, "libusb transfer failed, status: {:#04x}",
-                  static_cast<u32>(tr->status));
+                  Common::ToUnderlying(tr->status));
     if (!m_showed_failed_transfer.IsSet())
     {
       Core::DisplayMessage("Failed to transfer to or from to the Bluetooth adapter.", 10000);
@@ -729,7 +768,7 @@ void BluetoothRealDevice::HandleBulkOrIntrTransfer(libusb_transfer* tr)
       hci_link_key_notification_ep notification;
       std::memcpy(&notification, tr->buffer + sizeof(hci_event_hdr_t), sizeof(notification));
       linkkey_t key;
-      std::copy(std::begin(notification.key), std::end(notification.key), std::begin(key));
+      std::ranges::copy(notification.key, std::begin(key));
       m_link_keys[notification.bdaddr] = key;
     }
     else if (event == HCI_EVENT_COMMAND_COMPL)
@@ -743,7 +782,8 @@ void BluetoothRealDevice::HandleBulkOrIntrTransfer(libusb_transfer* tr)
 
   const auto& command = m_current_transfers.at(tr).command;
   command->FillBuffer(tr->buffer, tr->actual_length);
-  m_ios.EnqueueIPCReply(command->ios_request, tr->actual_length, 0, CoreTiming::FromThread::ANY);
+  GetEmulationKernel().EnqueueIPCReply(command->ios_request, tr->actual_length, 0,
+                                       CoreTiming::FromThread::ANY);
   m_current_transfers.erase(tr);
 }
 }  // namespace IOS::HLE

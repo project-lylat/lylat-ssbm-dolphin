@@ -88,7 +88,7 @@ static std::string GetGLSLVersionString()
 
 void SHADER::SetProgramVariables()
 {
-  if (g_ActiveConfig.backend_info.bSupportsBindingLayout)
+  if (g_backend_info.bSupportsBindingLayout)
     return;
 
   // To set uniform blocks/uniforms, the program must be active. We restore the
@@ -105,9 +105,9 @@ void SHADER::SetProgramVariables()
   if (VSBlock_id != -1)
     glUniformBlockBinding(glprogid, VSBlock_id, 2);
   if (GSBlock_id != -1)
-    glUniformBlockBinding(glprogid, GSBlock_id, 3);
+    glUniformBlockBinding(glprogid, GSBlock_id, 4);
   if (UBERBlock_id != -1)
-    glUniformBlockBinding(glprogid, UBERBlock_id, 4);
+    glUniformBlockBinding(glprogid, UBERBlock_id, 5);
 
   // Bind Texture Samplers
   for (int a = 0; a < 8; ++a)
@@ -126,9 +126,13 @@ void SHADER::SetProgramVariables()
 
 void SHADER::SetProgramBindings(bool is_compute)
 {
+  if (g_ogl_config.bSupportsExplicitLayoutInShader)
+  {
+    return;
+  }
   if (!is_compute)
   {
-    if (g_ActiveConfig.backend_info.bSupportsDualSourceBlend)
+    if (g_backend_info.bSupportsDualSourceBlend)
     {
       // So we do support extended blending
       // So we need to set a few more things here.
@@ -187,11 +191,6 @@ void SHADER::DestroyShaders()
   }
 }
 
-bool PipelineProgramKey::operator!=(const PipelineProgramKey& rhs) const
-{
-  return !operator==(rhs);
-}
-
 bool PipelineProgramKey::operator==(const PipelineProgramKey& rhs) const
 {
   return std::tie(vertex_shader_id, geometry_shader_id, pixel_shader_id) ==
@@ -228,35 +227,54 @@ void ProgramShaderCache::UploadConstants()
   auto& pixel_shader_manager = system.GetPixelShaderManager();
   auto& vertex_shader_manager = system.GetVertexShaderManager();
   auto& geometry_shader_manager = system.GetGeometryShaderManager();
-  if (pixel_shader_manager.dirty || vertex_shader_manager.dirty || geometry_shader_manager.dirty)
+  if (pixel_shader_manager.dirty || vertex_shader_manager.dirty || geometry_shader_manager.dirty ||
+      pixel_shader_manager.custom_constants_dirty)
   {
-    auto buffer = s_buffer->Map(s_ubo_buffer_size, s_ubo_align);
+    const u32 custom_constants_size = static_cast<u32>(
+        Common::AlignUp(pixel_shader_manager.custom_constants.size(), s_ubo_align));
+    auto buffer = s_buffer->Map(s_ubo_buffer_size + custom_constants_size, s_ubo_align);
 
     memcpy(buffer.first, &pixel_shader_manager.constants, sizeof(PixelShaderConstants));
 
-    memcpy(buffer.first + Common::AlignUp(sizeof(PixelShaderConstants), s_ubo_align),
-           &vertex_shader_manager.constants, sizeof(VertexShaderConstants));
+    u64 size = Common::AlignUp(sizeof(PixelShaderConstants), s_ubo_align);
 
-    memcpy(buffer.first + Common::AlignUp(sizeof(PixelShaderConstants), s_ubo_align) +
-               Common::AlignUp(sizeof(VertexShaderConstants), s_ubo_align),
-           &geometry_shader_manager.constants, sizeof(GeometryShaderConstants));
+    memcpy(buffer.first + size, &vertex_shader_manager.constants, sizeof(VertexShaderConstants));
+    size += Common::AlignUp(sizeof(VertexShaderConstants), s_ubo_align);
 
-    s_buffer->Unmap(s_ubo_buffer_size);
+    if (!pixel_shader_manager.custom_constants.empty())
+    {
+      memcpy(buffer.first + size, pixel_shader_manager.custom_constants.data(),
+             pixel_shader_manager.custom_constants.size());
+      size += custom_constants_size;
+    }
+
+    memcpy(buffer.first + size, &geometry_shader_manager.constants,
+           sizeof(GeometryShaderConstants));
+
+    s_buffer->Unmap(s_ubo_buffer_size + custom_constants_size);
+
     glBindBufferRange(GL_UNIFORM_BUFFER, 1, s_buffer->m_buffer, buffer.second,
                       sizeof(PixelShaderConstants));
-    glBindBufferRange(GL_UNIFORM_BUFFER, 2, s_buffer->m_buffer,
-                      buffer.second + Common::AlignUp(sizeof(PixelShaderConstants), s_ubo_align),
+    size = Common::AlignUp(sizeof(PixelShaderConstants), s_ubo_align);
+    glBindBufferRange(GL_UNIFORM_BUFFER, 2, s_buffer->m_buffer, buffer.second + size,
                       sizeof(VertexShaderConstants));
-    glBindBufferRange(GL_UNIFORM_BUFFER, 3, s_buffer->m_buffer,
-                      buffer.second + Common::AlignUp(sizeof(PixelShaderConstants), s_ubo_align) +
-                          Common::AlignUp(sizeof(VertexShaderConstants), s_ubo_align),
+    size += Common::AlignUp(sizeof(VertexShaderConstants), s_ubo_align);
+
+    if (!pixel_shader_manager.custom_constants.empty())
+    {
+      glBindBufferRange(GL_UNIFORM_BUFFER, 3, s_buffer->m_buffer, buffer.second + size,
+                        pixel_shader_manager.custom_constants.size());
+      size += Common::AlignUp(pixel_shader_manager.custom_constants.size(), s_ubo_align);
+    }
+    glBindBufferRange(GL_UNIFORM_BUFFER, 4, s_buffer->m_buffer, buffer.second + size,
                       sizeof(GeometryShaderConstants));
 
     pixel_shader_manager.dirty = false;
     vertex_shader_manager.dirty = false;
     geometry_shader_manager.dirty = false;
+    pixel_shader_manager.custom_constants_dirty = false;
 
-    ADDSTAT(g_stats.this_frame.bytes_uniform_streamed, s_ubo_buffer_size);
+    ADDSTAT(g_stats.this_frame.bytes_uniform_streamed, s_ubo_buffer_size + custom_constants_size);
   }
 }
 
@@ -269,7 +287,7 @@ void ProgramShaderCache::UploadConstants(const void* data, u32 data_size)
   s_buffer->Unmap(alloc_size);
 
   // bind the same sub-buffer to all stages
-  for (u32 index = 1; index <= 3; index++)
+  for (u32 index = 1; index <= 4; index++)
     glBindBufferRange(GL_UNIFORM_BUFFER, index, s_buffer->m_buffer, buffer.second, data_size);
 
   ADDSTAT(g_stats.this_frame.bytes_uniform_streamed, data_size);
@@ -280,8 +298,7 @@ bool ProgramShaderCache::CompileComputeShader(SHADER& shader, std::string_view c
   // We need to enable GL_ARB_compute_shader for drivers that support the extension,
   // but not GLSL 4.3. Mesa is one example.
   std::string full_code;
-  if (g_ActiveConfig.backend_info.bSupportsComputeShaders &&
-      g_ogl_config.eSupportedGLSLVersion < Glsl430)
+  if (g_backend_info.bSupportsComputeShaders && g_ogl_config.eSupportedGLSLVersion < Glsl430)
   {
     full_code = "#extension GL_ARB_compute_shader : enable\n";
   }
@@ -598,7 +615,7 @@ PipelineProgram* ProgramShaderCache::GetPipelineProgram(const GLVertexFormat* ve
       glAttachShader(prog->shader.glprogid, geometry_shader->GetGLShaderID());
     }
 
-    if (g_ActiveConfig.backend_info.bSupportsPipelineCacheData)
+    if (g_backend_info.bSupportsPipelineCacheData)
       glProgramParameteri(prog->shader.glprogid, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
 
     // Link program.
@@ -664,12 +681,13 @@ void ProgramShaderCache::CreateHeader()
   std::string SupportedESTextureBuffer;
   switch (g_ogl_config.SupportedESPointSize)
   {
-  case 1:
+  case EsPointSizeType::PointSizeOes:
     SupportedESPointSize = "#extension GL_OES_geometry_point_size : enable";
     break;
-  case 2:
+  case EsPointSizeType::PointSizeExt:
     SupportedESPointSize = "#extension GL_EXT_geometry_point_size : enable";
     break;
+  case EsPointSizeType::PointSizeNone:
   default:
     SupportedESPointSize = "";
     break;
@@ -690,7 +708,7 @@ void ProgramShaderCache::CreateHeader()
   }
 
   std::string earlyz_string;
-  if (g_ActiveConfig.backend_info.bSupportsEarlyZ)
+  if (g_backend_info.bSupportsEarlyZ)
   {
     if (g_ogl_config.bSupportsImageLoadStore)
     {
@@ -720,6 +738,56 @@ void ProgramShaderCache::CreateHeader()
     framebuffer_fetch_string = "";
     break;
   }
+
+  // The sampler2DMSArray keyword is reserved in GLSL ES 3.0 and 3.1, but is available in 3.2 and
+  // with GL_OES_texture_storage_multisample_2d_array for 3.1.
+  // See https://bugs.dolphin-emu.org/issues/13198.
+  const bool use_multisample_2d_array_precision =
+      v >= GlslEs320 ||
+      g_ogl_config.SupportedMultisampleTexStorage != MultisampleTexStorageType::TexStorageNone;
+
+  std::string binding_layout;
+  if (g_backend_info.bSupportsBindingLayout)
+  {
+    if (g_ogl_config.bSupportsExplicitLayoutInShader)
+    {
+      binding_layout =
+          "#extension GL_ARB_explicit_attrib_location : enable\n"
+          "#define ATTRIBUTE_LOCATION(x) layout(location = x)\n"
+          "#define FRAGMENT_OUTPUT_LOCATION(x) layout(location = x)\n"
+          "#define FRAGMENT_OUTPUT_LOCATION_INDEXED(x, y) layout(location = x, index = y)\n"
+          "#define UBO_BINDING(packing, x) layout(packing, binding = x)\n"
+          "#define SAMPLER_BINDING(x) layout(binding = x)\n"
+          "#define TEXEL_BUFFER_BINDING(x) layout(binding = x)\n"
+          "#define SSBO_BINDING(x) layout(std430, binding = x)\n"
+          "#define IMAGE_BINDING(format, x) layout(format, binding = x)\n";
+    }
+    else
+    {
+      binding_layout = "#define ATTRIBUTE_LOCATION(x)\n"
+                       "#define FRAGMENT_OUTPUT_LOCATION(x)\n"
+                       "#define FRAGMENT_OUTPUT_LOCATION_INDEXED(x, y)\n"
+                       "#define UBO_BINDING(packing, x) layout(packing, binding = x)\n"
+                       "#define SAMPLER_BINDING(x) layout(binding = x)\n"
+                       "#define TEXEL_BUFFER_BINDING(x) layout(binding = x)\n"
+                       "#define SSBO_BINDING(x) layout(std430, binding = x)\n"
+                       "#define IMAGE_BINDING(format, x) layout(format, binding = x)\n";
+    }
+  }
+  else
+  {
+    binding_layout = "#define ATTRIBUTE_LOCATION(x)\n"
+                     "#define FRAGMENT_OUTPUT_LOCATION(x)\n"
+                     "#define FRAGMENT_OUTPUT_LOCATION_INDEXED(x, y)\n"
+                     "#define UBO_BINDING(packing, x) layout(packing)\n"
+                     "#define SAMPLER_BINDING(x)\n"
+                     "#define TEXEL_BUFFER_BINDING(x)\n"
+                     "#define SSBO_BINDING(x) layout(std430)\n"
+                     "#define IMAGE_BINDING(format, x) layout(format)\n";
+  }
+
+  // TODO: actually define this if using 'bSupportsExplicitLayoutInShader'
+  const std::string varying_location = "#define VARYING_LOCATION(x)\n";
 
   std::string shader_shuffle_string;
   if (g_ogl_config.bSupportsKHRShaderSubgroup)
@@ -758,6 +826,7 @@ void ProgramShaderCache::CreateHeader()
       "{}\n"  // shader thread shuffle
       "{}\n"  // derivative control
       "{}\n"  // query levels
+      "{}\n"  // OES multisample texture storage
 
       // Precision defines for GLSL ES
       "{}\n"
@@ -784,50 +853,28 @@ void ProgramShaderCache::CreateHeader()
       ,
       GetGLSLVersionString(), v < Glsl140 ? "#extension GL_ARB_uniform_buffer_object : enable" : "",
       earlyz_string,
-      (g_ActiveConfig.backend_info.bSupportsBindingLayout && v < GlslEs310) ?
+      (g_backend_info.bSupportsBindingLayout && v < GlslEs310) ?
           "#extension GL_ARB_shading_language_420pack : enable" :
           "",
       (g_ogl_config.bSupportsMSAA && v < Glsl150) ?
           "#extension GL_ARB_texture_multisample : enable" :
           "",
-      // Attribute and fragment output bindings are still done via glBindAttribLocation and
-      // glBindFragDataLocation. In the future this could be moved to the layout qualifier
-      // in GLSL, but requires verification of GL_ARB_explicit_attrib_location.
-      g_ActiveConfig.backend_info.bSupportsBindingLayout ?
-          "#define ATTRIBUTE_LOCATION(x)\n"
-          "#define FRAGMENT_OUTPUT_LOCATION(x)\n"
-          "#define FRAGMENT_OUTPUT_LOCATION_INDEXED(x, y)\n"
-          "#define UBO_BINDING(packing, x) layout(packing, binding = x)\n"
-          "#define SAMPLER_BINDING(x) layout(binding = x)\n"
-          "#define TEXEL_BUFFER_BINDING(x) layout(binding = x)\n"
-          "#define SSBO_BINDING(x) layout(std430, binding = x)\n"
-          "#define IMAGE_BINDING(format, x) layout(format, binding = x)\n" :
-          "#define ATTRIBUTE_LOCATION(x)\n"
-          "#define FRAGMENT_OUTPUT_LOCATION(x)\n"
-          "#define FRAGMENT_OUTPUT_LOCATION_INDEXED(x, y)\n"
-          "#define UBO_BINDING(packing, x) layout(packing)\n"
-          "#define SAMPLER_BINDING(x)\n"
-          "#define TEXEL_BUFFER_BINDING(x)\n"
-          "#define SSBO_BINDING(x) layout(std430)\n"
-          "#define IMAGE_BINDING(format, x) layout(format)\n",
-      // Input/output blocks are matched by name during program linking
-      "#define VARYING_LOCATION(x)\n",
-      !is_glsles && g_ActiveConfig.backend_info.bSupportsFragmentStoresAndAtomics ?
+      binding_layout.c_str(), varying_location.c_str(),
+      !is_glsles && g_backend_info.bSupportsFragmentStoresAndAtomics ?
           "#extension GL_ARB_shader_storage_buffer_object : enable" :
           "",
-      v < Glsl400 && g_ActiveConfig.backend_info.bSupportsGSInstancing ?
+      v < Glsl400 && g_backend_info.bSupportsGSInstancing ?
           "#extension GL_ARB_gpu_shader5 : enable" :
           "",
-      v < Glsl400 && g_ActiveConfig.backend_info.bSupportsSSAA ?
-          "#extension GL_ARB_sample_shading : enable" :
-          "",
+      v < Glsl400 && g_backend_info.bSupportsSSAA ? "#extension GL_ARB_sample_shading : enable" :
+                                                    "",
       SupportedESPointSize,
       g_ogl_config.bSupportsAEP ? "#extension GL_ANDROID_extension_pack_es31a : enable" : "",
-      v < Glsl140 && g_ActiveConfig.backend_info.bSupportsPaletteConversion ?
+      v < Glsl140 && g_backend_info.bSupportsPaletteConversion ?
           "#extension GL_ARB_texture_buffer_object : enable" :
           "",
       SupportedESTextureBuffer,
-      is_glsles && g_ActiveConfig.backend_info.bSupportsDualSourceBlend ?
+      is_glsles && g_backend_info.bSupportsDualSourceBlend ?
           "#extension GL_EXT_blend_func_extended : enable" :
           ""
 
@@ -837,18 +884,22 @@ void ProgramShaderCache::CreateHeader()
           "#extension GL_ARB_shader_image_load_store : enable" :
           "",
       framebuffer_fetch_string, shader_shuffle_string,
-      g_ActiveConfig.backend_info.bSupportsCoarseDerivatives ?
-          "#extension GL_ARB_derivative_control : enable" :
-          "",
-      g_ActiveConfig.backend_info.bSupportsTextureQueryLevels ?
+      g_backend_info.bSupportsCoarseDerivatives ? "#extension GL_ARB_derivative_control : enable" :
+                                                  "",
+      g_backend_info.bSupportsTextureQueryLevels ?
           "#extension GL_ARB_texture_query_levels : enable" :
+          "",
+      // Note: GL_ARB_texture_storage_multisample doesn't have an #extension, as it doesn't
+      // need to change GLSL, but on GLES 3.1 sampler2DMSArray is a reserved keyword unless
+      // the extension is enabled. Thus, we don't need to check TexStorageCore/have an ARB version.
+      g_ogl_config.SupportedMultisampleTexStorage == MultisampleTexStorageType::TexStorageOes ?
+          "#extension GL_OES_texture_storage_multisample_2d_array : enable" :
           "",
       is_glsles ? "precision highp float;" : "", is_glsles ? "precision highp int;" : "",
       is_glsles ? "precision highp sampler2DArray;" : "",
-      (is_glsles && g_ActiveConfig.backend_info.bSupportsPaletteConversion) ?
-          "precision highp usamplerBuffer;" :
-          "",
-      v > GlslEs300 ? "precision highp sampler2DMSArray;" : "",
+      (is_glsles && g_backend_info.bSupportsPaletteConversion) ? "precision highp usamplerBuffer;" :
+                                                                 "",
+      use_multisample_2d_array_precision ? "precision highp sampler2DMSArray;" : "",
       v >= GlslEs310 ? "precision highp image2DArray;" : "");
 }
 
@@ -881,15 +932,15 @@ bool SharedContextAsyncShaderCompiler::WorkerThreadInitWorkerThread(void* param)
   // Make the state match the main context to have a better chance of avoiding recompiles.
   if (!context->IsGLES())
     glEnable(GL_PROGRAM_POINT_SIZE);
-  if (g_ActiveConfig.backend_info.bSupportsClipControl)
+  if (g_backend_info.bSupportsClipControl)
     glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
-  if (g_ActiveConfig.backend_info.bSupportsDepthClamp)
+  if (g_backend_info.bSupportsDepthClamp)
   {
     glEnable(GL_CLIP_DISTANCE0);
     glEnable(GL_CLIP_DISTANCE1);
     glEnable(GL_DEPTH_CLAMP);
   }
-  if (g_ActiveConfig.backend_info.bSupportsPrimitiveRestart)
+  if (g_backend_info.bSupportsPrimitiveRestart)
     GLUtil::EnablePrimitiveRestart(context);
 
   return true;

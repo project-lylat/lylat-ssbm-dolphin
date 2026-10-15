@@ -7,6 +7,7 @@
 #include "Common/CommonTypes.h"
 #include "Common/FileUtil.h"
 #include "Common/IOFile.h"
+#include "Common/SPSCQueue.h"
 #include "Core/Slippi/SlippiDirectCodes.h"
 #include "Core/Slippi/SlippiExiTypes.h"
 #include "Core/Slippi/SlippiGame.h"
@@ -20,7 +21,6 @@
 #include "Core/Slippi/SlippiUser.h"
 #include "EXI_Device.h"
 
-#define ROLLBACK_MAX_FRAMES 7
 #define MAX_NAME_LENGTH 15
 #define MAX_MESSAGE_LENGTH 25
 #define CONNECT_CODE_LENGTH 8
@@ -53,8 +53,16 @@ private:
     CMD_RECEIVE_GAME_INFO = 0x36,
     CMD_RECEIVE_POST_FRAME_UPDATE = 0x38,
     CMD_RECEIVE_GAME_END = 0x39,
+    CMD_RECEIVE_INITIAL_RNG = 0x3A,
+    CMD_RECEIVE_ITEM = 0x3B,
     CMD_FRAME_BOOKEND = 0x3C,
+    CMD_GECKO_LIST = 0x3D,
     CMD_MENU_FRAME = 0x3E,
+    CMD_RECEIVE_FOD_INFO = 0x3F,
+    CMD_RECEIVE_DL_INFO = 0x40,
+    CMD_RECEIVE_PS_INFO = 0x41,
+
+    CMD_RECEIVE_BONES = 0x60,
 
     // Playback
     CMD_PREPARE_REPLAY = 0x75,
@@ -85,6 +93,7 @@ private:
     CMD_GP_FETCH_STEP = 0xC1,
     CMD_REPORT_SET_COMPLETE = 0xC2,
     CMD_GET_PLAYER_SETTINGS = 0xC3,
+    CMD_REPORT_MATCH_STATUS_UPDATE = 0xC4,
 
     // Misc
     CMD_LOG_MESSAGE = 0xD0,
@@ -98,6 +107,9 @@ private:
     CMD_CHANGE_MUSIC_VOLUME = 0xD8,
     CMD_PREMADE_TEXT_LENGTH = 0xE1,
     CMD_PREMADE_TEXT_LOAD = 0xE2,
+    CMD_GET_RANK = 0xE3,
+    CMD_FETCH_RANK = 0xE4,
+    CMD_GET_RANK_VISIBILITY = 0xE5
   };
 
   enum
@@ -108,7 +120,22 @@ private:
     FRAME_RESP_FASTFORWARD = 3,
   };
 
-  std::unordered_map<u8, u32> payloadSizes = {
+  // This is a mapping of u8s to status updates such that we dont have to send
+  // strings from the game
+  std::unordered_map<u8, std::string> status_idx_map = {
+      {1, "connecting"},           {10, "game_setup_1"},
+      {11, "game_setup_2"},        {12, "game_setup_3"},
+      {13, "game_setup_4"},  // These are just here if we ever have longer than bo3s
+      {14, "game_setup_5"},        {15, "game_setup_6"},
+      {16, "game_setup_7"},  // Surely we never have more than bo7s
+      {20, "game_start_1"},        {21, "game_start_2"},
+      {22, "game_start_3"},        {23, "game_start_4"},
+      {24, "game_start_5"},        {25, "game_start_6"},
+      {26, "game_start_7"},        {30, "normal_completion"},
+      {31, "abnormal_completion"}, {40, "abandoned"},
+  };
+
+  std::unordered_map<u8, u32> payload_sizes = {
       // The actual size of this command will be sent in one byte
       // after the command is received. The other receive command IDs
       // and sizes will be received immediately following
@@ -129,7 +156,7 @@ private:
       {CMD_LOAD_SAVESTATE, 32},
       {CMD_GET_MATCH_STATE, 0},
       {CMD_FIND_OPPONENT, 19},
-      {CMD_SET_MATCH_SELECTIONS, 8},
+      {CMD_SET_MATCH_SELECTIONS, 9},
       {CMD_SEND_CHAT_MESSAGE, 2},
       {CMD_OPEN_LOGIN, 0},
       {CMD_LOGOUT, 0},
@@ -146,6 +173,8 @@ private:
       {CMD_REPORT_SET_COMPLETE,
        static_cast<u32>(sizeof(SlippiExiTypes::ReportSetCompletionQuery) - 1)},
       {CMD_GET_PLAYER_SETTINGS, 0},
+      {CMD_REPORT_MATCH_STATUS_UPDATE,
+       static_cast<u32>(sizeof(SlippiExiTypes::ReportMatchStatusUpdateQuery) - 1)},
 
       // Misc
       {CMD_LOG_MESSAGE, 0xFFFF},  // Variable size... will only work if by itself
@@ -160,7 +189,9 @@ private:
        static_cast<u32>(sizeof(SlippiExiTypes::ChangeMusicVolumeQuery) - 1)},
       {CMD_PREMADE_TEXT_LENGTH, 0x2},
       {CMD_PREMADE_TEXT_LOAD, 0x2},
-  };
+      {CMD_GET_RANK, 0x0},
+      {CMD_FETCH_RANK, 0x0},
+      {CMD_GET_RANK_VISIBILITY, 0x0}};
 
   struct WriteMessage
   {
@@ -209,7 +240,9 @@ private:
   void prepareOnlineMatchState();
   void setMatchSelections(u8* payload);
   bool shouldSkipOnlineFrame(s32 frame, s32 finalized_frame);
+  void handlePoorMatchPerformance(s32 frame);
   bool shouldAdvanceOnlineFrame(s32 frame);
+  bool opponentRunahead();
   void handleLogInRequest();
   void handleLogOutRequest();
   void prepareOnlineStatus();
@@ -220,7 +253,9 @@ private:
   void handleGamePrepStepComplete(const SlippiExiTypes::GpCompleteStepQuery& query);
   void prepareGamePrepOppStep(const SlippiExiTypes::GpFetchStepQuery& query);
   void handleCompleteSet(const SlippiExiTypes::ReportSetCompletionQuery& query);
+  void handleMatchStatusUpdate(const SlippiExiTypes::ReportMatchStatusUpdateQuery& query);
   void handleGetPlayerSettings();
+  void handleGetRank();
 
   // replay playback stuff
   void prepareGameInfo(u8* payload);
@@ -247,7 +282,7 @@ private:
 
   void FileWriteThread(void);
 
-  std::queue<std::unique_ptr<WriteMessage>> file_write_queue;
+  Common::SPSCQueue<std::unique_ptr<WriteMessage>> file_write_queue;
   bool write_thread_running = false;
   std::thread m_file_write_thread;
 
@@ -256,8 +291,10 @@ private:
   std::vector<u8> playback_savestate_payload;
   std::vector<u8> gecko_list;
 
-  u32 stall_frame_count = 0;
-  bool is_connection_stalled = false;
+  u32 stall_frame_counts[SLIPPI_REMOTE_PLAYER_MAX] = {};
+  u64 last_interval_time_us = 0;
+  // Leaky accumulator of poor-performance intervals (see handlePoorMatchPerformance)
+  s32 perf_debt = 0;
 
   std::vector<u8> m_read_queue;
   std::unique_ptr<Slippi::SlippiGame> m_current_game = nullptr;

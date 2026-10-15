@@ -18,14 +18,11 @@ namespace IOS::HLE
 {
 constexpr u32 USBV5_VERSION = 0x50001;
 
-USB_HIDv5::~USB_HIDv5()
-{
-  m_scan_thread.Stop();
-}
+USB_HIDv5::~USB_HIDv5() = default;
 
 std::optional<IPCReply> USB_HIDv5::IOCtl(const IOCtlRequest& request)
 {
-  auto& system = Core::System::GetInstance();
+  auto& system = GetSystem();
   auto& memory = system.GetMemory();
 
   request.Log(GetDeviceName(), Common::Log::LogType::IOS_USB);
@@ -50,7 +47,7 @@ std::optional<IPCReply> USB_HIDv5::IOCtl(const IOCtlRequest& request)
     return HandleDeviceIOCtl(request,
                              [&](USBV5Device& device) { return CancelEndpoint(device, request); });
   default:
-    request.DumpUnknown(GetDeviceName(), Common::Log::LogType::IOS_USB,
+    request.DumpUnknown(GetSystem(), GetDeviceName(), Common::Log::LogType::IOS_USB,
                         Common::Log::LogLevel::LERROR);
     return IPCReply(IPC_SUCCESS);
   }
@@ -58,7 +55,6 @@ std::optional<IPCReply> USB_HIDv5::IOCtl(const IOCtlRequest& request)
 
 std::optional<IPCReply> USB_HIDv5::IOCtlV(const IOCtlVRequest& request)
 {
-  request.DumpUnknown(GetDeviceName(), Common::Log::LogType::IOS_USB);
   switch (request.request)
   {
   // TODO: HIDv5 seems to be able to queue transfers depending on the transfer length (unlike VEN).
@@ -82,6 +78,7 @@ std::optional<IPCReply> USB_HIDv5::IOCtlV(const IOCtlVRequest& request)
                           [&, this]() { return SubmitTransfer(*device, *host_device, request); });
   }
   default:
+    request.DumpUnknown(GetSystem(), GetDeviceName(), Common::Log::LogType::IOS_USB);
     return IPCReply(IPC_EINVAL);
   }
 }
@@ -92,12 +89,13 @@ s32 USB_HIDv5::SubmitTransfer(USBV5Device& device, USB::Device& host_device,
   switch (ioctlv.request)
   {
   case USB::IOCTLV_USBV5_CTRLMSG:
-    return host_device.SubmitTransfer(std::make_unique<USB::V5CtrlMessage>(m_ios, ioctlv));
+    return host_device.SubmitTransfer(
+        std::make_unique<USB::V5CtrlMessage>(GetEmulationKernel(), ioctlv));
   case USB::IOCTLV_USBV5_INTRMSG:
   {
-    auto message = std::make_unique<USB::V5IntrMessage>(m_ios, ioctlv);
+    auto message = std::make_unique<USB::V5IntrMessage>(GetEmulationKernel(), ioctlv);
 
-    auto& system = Core::System::GetInstance();
+    auto& system = GetSystem();
     auto& memory = system.GetMemory();
 
     // Unlike VEN, the endpoint is determined by the value at 8-12.
@@ -118,7 +116,7 @@ s32 USB_HIDv5::SubmitTransfer(USBV5Device& device, USB::Device& host_device,
 
 IPCReply USB_HIDv5::CancelEndpoint(USBV5Device& device, const IOCtlRequest& request)
 {
-  auto& system = Core::System::GetInstance();
+  auto& system = GetSystem();
   auto& memory = system.GetMemory();
 
   const u8 value = memory.Read_U8(request.buffer_in + 8);
@@ -148,7 +146,7 @@ IPCReply USB_HIDv5::GetDeviceInfo(USBV5Device& device, const IOCtlRequest& reque
   if (request.buffer_out == 0 || request.buffer_out_size != 0x60)
     return IPCReply(IPC_EINVAL);
 
-  auto& system = Core::System::GetInstance();
+  auto& system = GetSystem();
   auto& memory = system.GetMemory();
 
   const std::shared_ptr<USB::Device> host_device = GetDeviceById(device.host_id);
@@ -168,11 +166,10 @@ IPCReply USB_HIDv5::GetDeviceInfo(USBV5Device& device, const IOCtlRequest& reque
   memory.CopyToEmu(request.buffer_out + 56, &config_descriptor, sizeof(config_descriptor));
 
   std::vector<USB::InterfaceDescriptor> interfaces = host_device->GetInterfaces(0);
-  auto it = std::find_if(interfaces.begin(), interfaces.end(),
-                         [&](const USB::InterfaceDescriptor& interface) {
-                           return interface.bInterfaceNumber == device.interface_number &&
-                                  interface.bAlternateSetting == alt_setting;
-                         });
+  auto it = std::ranges::find_if(interfaces, [&](const USB::InterfaceDescriptor& interface) {
+    return interface.bInterfaceNumber == device.interface_number &&
+           interface.bAlternateSetting == alt_setting;
+  });
   if (it == interfaces.end())
     return IPCReply(IPC_EINVAL);
   it->Swap();

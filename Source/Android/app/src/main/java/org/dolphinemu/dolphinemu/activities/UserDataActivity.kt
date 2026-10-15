@@ -8,22 +8,22 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.view.View
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.ViewModelProvider
-import com.google.android.material.color.MaterialColors
 import org.dolphinemu.dolphinemu.R
 import org.dolphinemu.dolphinemu.databinding.ActivityUserDataBinding
 import org.dolphinemu.dolphinemu.dialogs.NotificationDialog
 import org.dolphinemu.dolphinemu.dialogs.TaskDialog
 import org.dolphinemu.dolphinemu.dialogs.UserDataImportWarningDialog
+import org.dolphinemu.dolphinemu.features.DocumentProvider
 import org.dolphinemu.dolphinemu.model.TaskViewModel
 import org.dolphinemu.dolphinemu.utils.*
 import org.dolphinemu.dolphinemu.utils.ThemeHelper.enableScrollTint
-import org.dolphinemu.dolphinemu.utils.ThemeHelper.setNavigationBarColor
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -31,6 +31,7 @@ import java.io.IOException
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+import kotlin.system.exitProcess
 
 class UserDataActivity : AppCompatActivity() {
     private lateinit var taskViewModel: TaskViewModel
@@ -41,14 +42,14 @@ class UserDataActivity : AppCompatActivity() {
         taskViewModel = ViewModelProvider(this)[TaskViewModel::class.java]
 
         ThemeHelper.setTheme(this)
+        enableEdgeToEdge()
 
         super.onCreate(savedInstanceState)
 
         mBinding = ActivityUserDataBinding.inflate(layoutInflater)
         setContentView(mBinding.root)
 
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-
+        val android7 = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
         val android10 = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
         val android11 = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
         val legacy = DirectoryInitialization.isUsingLegacyUserDirectory()
@@ -56,6 +57,10 @@ class UserDataActivity : AppCompatActivity() {
         val userDataNewLocation =
             if (android10) R.string.user_data_new_location_android_10 else R.string.user_data_new_location
         mBinding.textType.setText(if (legacy) R.string.user_data_old_location else userDataNewLocation)
+
+        val openFileManagerStringId =
+            if (android7) R.string.user_data_open_user_folder else R.string.user_data_open_system_file_manager
+        mBinding.buttonOpenSystemFileManager.setText(openFileManagerStringId)
 
         mBinding.textPath.text = DirectoryInitialization.getUserDirectory()
 
@@ -95,10 +100,7 @@ class UserDataActivity : AppCompatActivity() {
             dialog.show(supportFragmentManager, UserDataImportWarningDialog.TAG)
         } else if (requestCode == REQUEST_CODE_EXPORT && resultCode == RESULT_OK) {
             taskViewModel.clear()
-            taskViewModel.task = {
-                val resultResource = exportUserData(data!!.data!!)
-                taskViewModel.setResult(resultResource)
-            }
+            taskViewModel.task = { exportUserData(data!!.data!!) }
 
             val arguments = Bundle()
             arguments.putInt(TaskDialog.KEY_TITLE, R.string.export_in_progress)
@@ -112,27 +114,43 @@ class UserDataActivity : AppCompatActivity() {
     }
 
     private fun openFileManager() {
+        // First, try to open the user data folder directly
         try {
-            // First, try the package name used on "normal" phones
-            startActivity(getFileManagerIntent("com.google.android.documentsui"))
-        } catch (e: ActivityNotFoundException) {
-            try {
-                // Next, try the AOSP package name
-                startActivity(getFileManagerIntent("com.android.documentsui"))
-            } catch (e2: ActivityNotFoundException) {
-                // Activity not found. Perhaps it was removed by the OEM, or by some new Android version
-                // that didn't exist at the time of writing. Not much we can do other than tell the user.
-                val arguments = Bundle()
-                arguments.putInt(
-                    NotificationDialog.KEY_MESSAGE,
-                    R.string.user_data_open_system_file_manager_failed
-                )
+            startActivity(getFileManagerIntentOnDocumentProvider(Intent.ACTION_VIEW))
+            return
+        } catch (_: ActivityNotFoundException) {}
 
-                val dialog = NotificationDialog()
-                dialog.arguments = arguments
-                dialog.show(supportFragmentManager, NotificationDialog.TAG)
-            }
-        }
+        try {
+            startActivity(getFileManagerIntentOnDocumentProvider("android.provider.action.BROWSE"))
+            return
+        } catch (_: ActivityNotFoundException) {}
+
+        try {
+            // Just try to open the file manager, try the package name used on "normal" phones
+            startActivity(getFileManagerIntent("com.google.android.documentsui"))
+            return
+        } catch (_: ActivityNotFoundException) {}
+
+        try {
+            // Next, try the AOSP package name
+            startActivity(getFileManagerIntent("com.android.documentsui"))
+            return
+        } catch (_: ActivityNotFoundException) {}
+
+        try {
+            // Activity not found. Perhaps it was removed by the OEM, or by some new Android version
+            // that didn't exist at the time of writing. Not much we can do other than tell the user.
+            val arguments = Bundle()
+            arguments.putInt(
+                NotificationDialog.KEY_MESSAGE,
+                R.string.user_data_open_system_file_manager_failed
+            )
+
+            val dialog = NotificationDialog()
+            dialog.arguments = arguments
+            dialog.show(supportFragmentManager, NotificationDialog.TAG)
+            return
+        } catch (_: ActivityNotFoundException) {}
     }
 
     private fun getFileManagerIntent(packageName: String): Intent {
@@ -140,6 +158,15 @@ class UserDataActivity : AppCompatActivity() {
         val intent = Intent(Intent.ACTION_MAIN)
         intent.setClassName(packageName, "com.android.documentsui.files.FilesActivity")
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        return intent
+    }
+
+    private fun getFileManagerIntentOnDocumentProvider(action: String): Intent {
+        val authority = "$packageName.user"
+        val intent = Intent(action)
+        intent.addCategory(Intent.CATEGORY_DEFAULT)
+        intent.data = DocumentsContract.buildRootUri(authority, DocumentProvider.ROOT_ID)
+        intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         return intent
     }
 
@@ -154,7 +181,10 @@ class UserDataActivity : AppCompatActivity() {
             if (!isDolphinUserDataBackup(source))
                 return R.string.user_data_import_invalid_file
 
-            taskViewModel.mustRestartApp = true
+            taskViewModel.onResultDismiss = {
+                // Restart the app to apply the imported user data.
+                exitProcess(0)
+            }
 
             contentResolver.openInputStream(source).use { `is` ->
                 ZipInputStream(`is`).use { zis ->
@@ -305,10 +335,6 @@ class UserDataActivity : AppCompatActivity() {
             mBinding.scrollViewUserData.setPadding(insets.left, 0, insets.right, insets.bottom)
 
             InsetsHelper.applyNavbarWorkaround(insets.bottom, mBinding.workaroundView)
-            setNavigationBarColor(
-                this,
-                MaterialColors.getColor(mBinding.appbarUserData, R.attr.colorSurface)
-            )
             windowInsets
         }
     }

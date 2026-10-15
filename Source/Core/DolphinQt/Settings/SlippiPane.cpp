@@ -4,14 +4,18 @@
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGridLayout>
+#include <QHBoxLayout>
+#include <QLineEdit>
 #include <QSizePolicy>
 
 #include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
+#include "Core/Slippi/SlippiQrLogin.h"
 #include "Core/System.h"
 
 #include "DolphinQt/QtUtils/NonDefaultQPushButton.h"
+#include "DolphinQt/SlippiQrLoginDialog.h"
 
 #ifndef IS_PLAYBACK
 #include "Core/HW/EXI/EXI.h"
@@ -69,7 +73,7 @@ void SlippiPane::CreateLayout()
   m_main_layout->addWidget(online_settings);
 
   m_delay_spin = new QSpinBox();
-  m_delay_spin->setFixedSize(35, 25);
+  m_delay_spin->setFixedSize(45, 25);
   m_delay_spin->setRange(1, 9);
   m_delay_spin->setToolTip(tr("Leave this at 2 unless consistently playing on 120+ ping. "
                               "Increasing this can cause unplayable input delay, and lowering it "
@@ -100,6 +104,34 @@ void SlippiPane::CreateLayout()
   netplay_port_layout->addWidget(m_netplay_port, 0, 1, Qt::AlignLeft);
 
   online_settings_layout->addRow(netplay_port_layout);
+
+  auto* qr_login_server = new QLineEdit();
+  qr_login_server->setPlaceholderText(tr("Off (browser login)"));
+  qr_login_server->setToolTip(
+      tr("Sign in by scanning a QR code with your phone. Enter the address of a server that "
+         "supports QR sign-in, or leave this empty to log in through the browser."));
+  qr_login_server->setText(QString::fromStdString(Config::Get(Config::SLIPPI_QR_LOGIN_SERVER)));
+  connect(qr_login_server, &QLineEdit::editingFinished, [qr_login_server] {
+    Config::SetBase(Config::SLIPPI_QR_LOGIN_SERVER,
+                    qr_login_server->text().trimmed().toStdString());
+  });
+  auto* qr_login_button = new NonDefaultQPushButton(tr("Sign In..."));
+  qr_login_button->setToolTip(tr("Show the QR code now, without starting the game."));
+  qr_login_button->setEnabled(!qr_login_server->text().trimmed().isEmpty());
+  connect(qr_login_server, &QLineEdit::textChanged, [qr_login_button](const QString& text) {
+    qr_login_button->setEnabled(!text.trimmed().isEmpty());
+  });
+  connect(qr_login_button, &QPushButton::clicked, [this, qr_login_server] {
+    Config::SetBase(Config::SLIPPI_QR_LOGIN_SERVER,
+                    qr_login_server->text().trimmed().toStdString());
+    std::string origin, account_path;
+    if (SlippiQrLogin::GetTarget(&origin, &account_path))
+      SlippiQrLoginDialog::ShowFor(window(), origin, account_path);
+  });
+  auto* qr_login_layout = new QHBoxLayout();
+  qr_login_layout->addWidget(qr_login_server, 1);
+  qr_login_layout->addWidget(qr_login_button);
+  online_settings_layout->addRow(tr("QR Sign-in Server:"), qr_login_layout);
 
   // // i'd like to note that I hate everything about how this is organized for the next two
   // sections
@@ -140,6 +172,26 @@ void SlippiPane::CreateLayout()
 
   // online_settings_layout->addRow(netplay_ip_layout);
 
+  // Rank Info Settings
+  auto* ranked_settings = new QGroupBox(tr("Rank Settings"));
+  auto* ranked_settings_layout = new QVBoxLayout();
+  ranked_settings->setLayout(ranked_settings_layout);
+  m_main_layout->addWidget(ranked_settings);
+
+  m_enable_local_rank = new QCheckBox(tr("Show your rank (Character Select and Ranked Setup Screen)"));
+  m_enable_local_rank->setToolTip(
+      tr("Toggle rank information on the CSS (rank icon and rating).")
+    );
+  ranked_settings_layout->addWidget(m_enable_local_rank);
+
+  m_enable_opp_rank = new QCheckBox(tr("Show opponent's rank (Ranked Setup Screen)"));
+  m_enable_opp_rank->setToolTip(
+      tr("Toggle rank information on the ranked game setup screen.")
+    );
+  ranked_settings_layout->addWidget(m_enable_opp_rank);
+
+
+
   // Jukebox Settings
   auto* jukebox_settings = new QGroupBox(tr("Jukebox Settings (Beta)"));
   auto* jukebox_settings_layout = new QVBoxLayout();
@@ -165,7 +217,6 @@ void SlippiPane::CreateLayout()
   sfx_music_slider_layout->addWidget(m_music_volume_percent, 1, 2);
 
   jukebox_settings_layout->addLayout(sfx_music_slider_layout);
-
 #else
   // Playback Settings
   auto* playback_settings = new QGroupBox(tr("Playback Settings"));
@@ -212,6 +263,12 @@ void SlippiPane::LoadConfig()
 
   m_netplay_port->setDisabled(!force_netplay_port);
 
+  // Ranked Settings
+  auto enable_local_rank = Config::Get(Config::SLIPPI_ENABLE_RANK_LOCAL);
+  m_enable_local_rank->setChecked(enable_local_rank);
+  auto enable_opp_rank = Config::Get(Config::SLIPPI_ENABLE_RANK_OPP);
+  m_enable_opp_rank->setChecked(enable_opp_rank);
+
   // Jukebox Settings
   auto enable_jukebox = Config::Get(Config::SLIPPI_ENABLE_JUKEBOX);
   auto jukebox_volume = Config::Get(Config::SLIPPI_JUKEBOX_VOLUME);
@@ -249,6 +306,10 @@ void SlippiPane::ConnectLayout()
   connect(m_enable_jukebox, &QCheckBox::toggled, this, &SlippiPane::ToggleJukebox);
   connect(m_music_volume_slider, qOverload<int>(&QSlider::valueChanged), this,
           &SlippiPane::OnMusicVolumeUpdate);
+
+  // Ranked Settings
+  connect(m_enable_local_rank, &QCheckBox::toggled, this, &SlippiPane::ToggleLocalRankInfo);
+  connect(m_enable_opp_rank, &QCheckBox::toggled, this, &SlippiPane::ToggleOpponentRankInfo);
 #else
   // HOOKUP PLAYBACK STUFF
 #endif
@@ -285,7 +346,7 @@ void SlippiPane::ToggleJukebox(bool checked)
   Config::SetBase(Config::SLIPPI_ENABLE_JUKEBOX, checked);
   m_music_volume_slider->setDisabled(!checked);
 
-  if (Core::GetState() == Core::State::Running)
+  if (Core::GetState(Core::System::GetInstance()) == Core::State::Running)
   {
     auto& system = Core::System::GetInstance();
     auto& exi_manager = system.GetExpansionInterface();
@@ -297,11 +358,21 @@ void SlippiPane::ToggleJukebox(bool checked)
   }
 }
 
+void SlippiPane::ToggleLocalRankInfo(bool checked)
+{
+  Config::SetBase(Config::SLIPPI_ENABLE_RANK_LOCAL, checked);
+}
+
+void SlippiPane::ToggleOpponentRankInfo(bool checked)
+{
+  Config::SetBase(Config::SLIPPI_ENABLE_RANK_OPP, checked);
+}
+
 void SlippiPane::OnMusicVolumeUpdate(int volume)
 {
   Config::SetBase(Config::SLIPPI_JUKEBOX_VOLUME, volume);
   m_music_volume_percent->setText(tr(" %1%").arg(volume));
-  if (Core::GetState() == Core::State::Running)
+  if (Core::GetState(Core::System::GetInstance()) == Core::State::Running)
   {
     auto& system = Core::System::GetInstance();
     auto& exi_manager = system.GetExpansionInterface();

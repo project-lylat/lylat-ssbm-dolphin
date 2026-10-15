@@ -6,14 +6,12 @@
 #include <array>
 
 #include "Common/Assert.h"
-#include "Common/BitUtils.h"
 #include "Common/Common.h"
 #include "Common/CommonTypes.h"
 
 #include "Core/HW/WiimoteEmu/Extension/DesiredExtensionState.h"
 #include "Core/HW/WiimoteEmu/WiimoteEmu.h"
 
-#include "InputCommon/ControllerEmu/Control/Input.h"
 #include "InputCommon/ControllerEmu/ControlGroup/AnalogStick.h"
 #include "InputCommon/ControllerEmu/ControlGroup/Triggers.h"
 
@@ -30,12 +28,15 @@ DrawsomeTablet::DrawsomeTablet() : Extension3rdParty("Drawsome", _trans("Drawsom
 
   // Touch
   groups.emplace_back(m_touch = new ControllerEmu::Triggers(_trans("Touch")));
-  m_touch->AddInput(ControllerEmu::Translate, _trans("Pressure"));
-  m_touch->AddInput(ControllerEmu::Translate, _trans("Lift"));
+  using Translatability = ControllerEmu::Translatability;
+  m_touch->AddInput(Translatability::Translate, _trans("Pressure"));
+  m_touch->AddInput(Translatability::Translate, _trans("Lift"));
 }
 
 void DrawsomeTablet::BuildDesiredExtensionState(DesiredExtensionState* target_state)
 {
+  using ControllerEmu::MapFloat;
+
   DataFormat& tablet_data = target_state->data.emplace<DataFormat>();
 
   // Stylus X/Y (calibrated values):

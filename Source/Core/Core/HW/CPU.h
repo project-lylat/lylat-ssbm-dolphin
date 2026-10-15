@@ -4,15 +4,20 @@
 #pragma once
 
 #include <condition_variable>
-#include <functional>
 #include <mutex>
 #include <queue>
+
+#include "Common/Event.h"
+#include "Common/Functional.h"
 
 namespace Common
 {
 class Event;
 }
-
+namespace Core
+{
+class System;
+}
 namespace PowerPC
 {
 enum class CPUCore;
@@ -30,7 +35,7 @@ enum class State
 class CPUManager
 {
 public:
-  CPUManager();
+  explicit CPUManager(Core::System& system);
   CPUManager(const CPUManager& other) = delete;
   CPUManager(CPUManager&& other) = delete;
   CPUManager& operator=(const CPUManager& other) = delete;
@@ -59,10 +64,10 @@ public:
   void StepOpcode(Common::Event* event = nullptr);
 
   // Enable or Disable Stepping. [Will deadlock if called from a system thread]
-  void EnableStepping(bool stepping);
+  void SetStepping(bool stepping);
 
-  // Breakpoint activation for system threads. Similar to EnableStepping(true).
-  // NOTE: Unlike EnableStepping, this does NOT synchronize with the CPU Thread
+  // Breakpoint activation for system threads. Similar to SetStepping(true).
+  // NOTE: Unlike SetStepping, this does NOT synchronize with the CPU Thread
   //   which enables it to avoid deadlocks but also makes it less safe so it
   //   should not be used by the Host.
   void Break();
@@ -88,17 +93,18 @@ public:
   // Return value for do_lock == true is whether the state was State::Running or not.
   // Return value for do_lock == false is whether the state was changed *to* State::Running or not.
   // Cannot be used by System threads as it will deadlock. It is threadsafe otherwise.
-  // "control_adjacent" causes PauseAndLock to behave like EnableStepping by modifying the
+  // "control_adjacent" causes PauseAndLock to behave like SetStepping by modifying the
   //   state of the Audio and FIFO subsystems as well.
   bool PauseAndLock(bool do_lock, bool unpause_on_unlock = true, bool control_adjacent = false);
 
   // Adds a job to be executed during on the CPU thread. This should be combined with
   // PauseAndLock(), as while the CPU is in the run loop, it won't execute the function.
-  void AddCPUThreadJob(std::function<void()> function);
+  void AddCPUThreadJob(Common::MoveOnlyFunction<void()> function);
 
 private:
   void FlushStepSyncEventLocked();
   void ExecutePendingJobs(std::unique_lock<std::mutex>& state_lock);
+  void StartTimePlayedTimer();
   void RunAdjacentSystems(bool running);
   bool SetStateLocked(State s);
 
@@ -107,9 +113,9 @@ private:
   // Read access is unsynchronized.
   State m_state = State::PowerDown;
 
-  // Synchronizes EnableStepping and PauseAndLock so only one instance can be
+  // Synchronizes SetStepping and PauseAndLock so only one instance can be
   // active at a time. Simplifies code by eliminating several edge cases where
-  // the EnableStepping(true)/PauseAndLock(true) case must release the state lock
+  // the SetStepping(true)/PauseAndLock(true) case must release the state lock
   // and wait for the CPU Thread which would otherwise require additional flags.
   // NOTE: When using the stepping lock, it must always be acquired first. If
   //   the lock is acquired after the state lock then that is guaranteed to
@@ -129,6 +135,9 @@ private:
   bool m_state_system_request_stepping = false;
   bool m_state_cpu_step_instruction = false;
   Common::Event* m_state_cpu_step_instruction_sync = nullptr;
-  std::queue<std::function<void()>> m_pending_jobs;
+  std::queue<Common::MoveOnlyFunction<void()>> m_pending_jobs;
+  Common::Event m_time_played_finish_sync;
+
+  Core::System& m_system;
 };
 }  // namespace CPU

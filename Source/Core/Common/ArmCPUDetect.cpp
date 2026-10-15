@@ -15,14 +15,25 @@
 #include <Windows.h>
 #include <arm64intr.h>
 #include "Common/WindowsRegistry.h"
-#else
-#ifndef __FreeBSD__
+#elif defined(__linux__)
 #include <asm/hwcap.h>
-#endif
 #include <sys/auxv.h>
+#elif defined(HAVE_ELF_AUX_INFO)
+#include <sys/auxv.h>
+#elif defined(__OpenBSD__)
+#include <machine/armreg.h>
+#include <machine/cpu.h>
+#endif
+
+#ifdef __OpenBSD__
+// clang-format off
+#include <sys/types.h>
+#include <sys/sysctl.h>
+// clang-format on
 #endif
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #include "Common/CommonTypes.h"
 #include "Common/FileUtil.h"
@@ -136,13 +147,13 @@ static bool Read_MIDR_EL1_Sysfs(u64* value)
 
 #endif
 
-#if defined(__linux__) || defined(__FreeBSD__)
+#if defined(__linux__) || defined(HAVE_ELF_AUX_INFO)
 
 static u32 ReadHwCap(u32 type)
 {
 #if defined(__linux__)
   return getauxval(type);
-#elif defined(__FreeBSD__)
+#elif defined(HAVE_ELF_AUX_INFO)
   u_long hwcap = 0;
   elf_aux_info(type, &hwcap, sizeof(hwcap));
   return hwcap;
@@ -183,7 +194,7 @@ static bool Read_MIDR_EL1(u64* value)
 
 #endif
 
-#ifndef __APPLE__
+#if defined(_WIN32) || defined(__linux__) || defined(HAVE_ELF_AUX_INFO)
 
 static std::string MIDRToString(u64 midr)
 {
@@ -248,11 +259,21 @@ void CPUInfo::Detect()
   {
     cpu_id = MIDRToString(reg);
   }
-#else
-  // Linux, Android, and FreeBSD
+#elif defined(__linux__) || defined(HAVE_ELF_AUX_INFO)
+  // Linux, Android, FreeBSD and OpenBSD with elf_aux_info
 
 #if defined(__FreeBSD__)
   SysctlByName(&model_name, "hw.model");
+#elif defined(__OpenBSD__)
+  int mib[2];
+  size_t len;
+  char hwmodel[256];
+
+  mib[0] = CTL_HW;
+  mib[1] = HW_MODEL;
+  len = std::size(hwmodel);
+  if (sysctl(mib, 2, &hwmodel, &len, nullptr, 0) != -1)
+    model_name = std::string(hwmodel, len - 1);
 #elif defined(__linux__)
   if (!ReadDeviceTree(&model_name, "model"))
   {
@@ -277,6 +298,33 @@ void CPUInfo::Detect()
   {
     cpu_id = MIDRToString(midr);
   }
+#elif defined(__OpenBSD__)
+  // OpenBSD
+  int mib[2];
+  size_t len;
+  char hwmodel[256];
+  uint64_t isar0;
+
+  mib[0] = CTL_HW;
+  mib[1] = HW_MODEL;
+  len = std::size(hwmodel);
+  if (sysctl(mib, 2, &hwmodel, &len, nullptr, 0) != -1)
+    model_name = std::string(hwmodel, len - 1);
+
+  mib[0] = CTL_MACHDEP;
+  mib[1] = CPU_ID_AA64ISAR0;
+  len = sizeof(isar0);
+  if (sysctl(mib, 2, &isar0, &len, nullptr, 0) != -1)
+  {
+    if (ID_AA64ISAR0_AES(isar0) >= ID_AA64ISAR0_AES_BASE)
+      bAES = true;
+    if (ID_AA64ISAR0_SHA1(isar0) >= ID_AA64ISAR0_SHA1_BASE)
+      bSHA1 = true;
+    if (ID_AA64ISAR0_SHA2(isar0) >= ID_AA64ISAR0_SHA2_BASE)
+      bSHA2 = true;
+    if (ID_AA64ISAR0_CRC32(isar0) >= ID_AA64ISAR0_CRC32_BASE)
+      bCRC32 = true;
+  }
 #endif
 
   model_name = ReplaceAll(model_name, ",", "_");
@@ -300,5 +348,5 @@ std::string CPUInfo::Summarize()
   if (bSHA2)
     sum.push_back("SHA2");
 
-  return JoinStrings(sum, ",");
+  return fmt::to_string(fmt::join(sum, ","));
 }

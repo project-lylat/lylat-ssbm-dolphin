@@ -17,8 +17,9 @@
 class PointerWrap;
 namespace Core
 {
+class CPUThreadGuard;
 class System;
-}
+}  // namespace Core
 namespace CoreTiming
 {
 struct EventType;
@@ -140,10 +141,10 @@ public:
   void SetDisc(std::unique_ptr<DiscIO::VolumeDisc> disc,
                std::optional<std::vector<std::string>> auto_disc_change_paths);
   bool IsDiscInside() const;
-  void EjectDisc(EjectCause cause);                        // Must only be called on the CPU thread
-  void ChangeDisc(const std::vector<std::string>& paths);  // Must only be called on the CPU thread
-  void ChangeDisc(const std::string& new_path);            // Must only be called on the CPU thread
-  bool AutoChangeDisc();                                   // Must only be called on the CPU thread
+  void EjectDisc(const Core::CPUThreadGuard& guard, EjectCause cause);
+  void ChangeDisc(const Core::CPUThreadGuard& guard, const std::vector<std::string>& paths);
+  void ChangeDisc(const Core::CPUThreadGuard& guard, const std::string& new_path);
+  bool AutoChangeDisc(const Core::CPUThreadGuard& guard);
 
   // This function returns true and calls SConfig::SetRunningGameMetadata(Volume&, Partition&)
   // if both of the following conditions are true:
@@ -178,8 +179,9 @@ public:
 private:
   void DTKStreamingCallback(DIInterruptType interrupt_type, const std::vector<u8>& audio_data,
                             s64 cycles_late);
-  size_t ProcessDTKSamples(std::vector<s16>* temp_pcm, const std::vector<u8>& audio_data);
-  u32 AdvanceDTK(u32 maximum_samples, u32* samples_to_process);
+  size_t ProcessDTKSamples(s16* target_samples, size_t target_block_count,
+                           const std::vector<u8>& audio_data);
+  u32 AdvanceDTK(u32 maximum_blocks, u32* blocks_to_process);
 
   void SetLidOpen();
   void UpdateInterrupts();
@@ -273,7 +275,7 @@ private:
   u32 m_current_length = 0;
   u64 m_next_start = 0;
   u32 m_next_length = 0;
-  u32 m_pending_samples = 0;
+  u32 m_pending_blocks = 0;
   bool m_enable_dtk = false;
   u8 m_dtk_buffer_length = 0;  // TODO: figure out how this affects the regular buffer
 

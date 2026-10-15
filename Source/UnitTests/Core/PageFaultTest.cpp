@@ -5,10 +5,13 @@
 #include <fmt/format.h>
 
 #include "Common/CommonTypes.h"
+#include "Common/ScopeGuard.h"
 #include "Common/Timer.h"
+#include "Core/Core.h"
 #include "Core/MemTools.h"
 #include "Core/PowerPC/JitCommon/JitBase.h"
 #include "Core/PowerPC/JitInterface.h"
+#include "Core/System.h"
 
 // include order is important
 #include <gtest/gtest.h>  // NOLINT
@@ -25,6 +28,8 @@ enum
 class PageFaultFakeJit : public JitBase
 {
 public:
+  explicit PageFaultFakeJit(Core::System& system) : JitBase(system) {}
+
   // CPUCoreBase methods
   void Init() override {}
   void Shutdown() override {}
@@ -35,8 +40,12 @@ public:
   // JitBase methods
   JitBaseBlockCache* GetBlockCache() override { return nullptr; }
   void Jit(u32 em_address) override {}
+  void EraseSingleBlock(const JitBlock&) override {}
+  std::vector<MemoryStats> GetMemoryStats() const override { return {}; }
+  std::size_t DisassembleNearCode(const JitBlock&, std::ostream&) const override { return 0; }
+  std::size_t DisassembleFarCode(const JitBlock&, std::ostream&) const override { return 0; }
   const CommonAsmRoutinesBase* GetAsmRoutines() override { return nullptr; }
-  virtual bool HandleFault(uintptr_t access_address, SContext* ctx) override
+  bool HandleFault(uintptr_t access_address, SContext* ctx) override
   {
     m_pre_unprotect_time = std::chrono::high_resolution_clock::now();
     Common::UnWriteProtectMemory(m_data, PAGE_GRAN, /*allowExecute*/ false);
@@ -63,29 +72,31 @@ static void ASAN_DISABLE perform_invalid_access(void* data)
 TEST(PageFault, PageFault)
 {
   if (!EMM::IsExceptionHandlerSupported())
-  {
-    // TODO: Use GTEST_SKIP() instead when GTest is updated to 1.10+
-    return;
-  }
+    GTEST_SKIP() << "Skipping PageFault test because exception handler is unsupported.";
+
   EMM::InstallExceptionHandler();
   void* data = Common::AllocateMemoryPages(PAGE_GRAN);
   EXPECT_NE(data, nullptr);
   Common::WriteProtectMemory(data, PAGE_GRAN, false);
 
-  PageFaultFakeJit pfjit;
-  JitInterface::SetJit(&pfjit);
+  Core::DeclareAsCPUThread();
+  Common::ScopeGuard cpu_thread_guard([] { Core::UndeclareAsCPUThread(); });
+
+  auto& system = Core::System::GetInstance();
+  auto unique_pfjit = std::make_unique<PageFaultFakeJit>(system);
+  auto& pfjit = *unique_pfjit;
+  system.GetJitInterface().SetJit(std::move(unique_pfjit));
   pfjit.m_data = data;
 
   auto start = std::chrono::high_resolution_clock::now();
   perform_invalid_access(data);
   auto end = std::chrono::high_resolution_clock::now();
 
-  auto difference_in_nanoseconds = [](auto start, auto end) {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+  auto difference_in_nanoseconds = [](auto diff_start, auto diff_end) {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(diff_end - diff_start).count();
   };
 
   EMM::UninstallExceptionHandler();
-  JitInterface::SetJit(nullptr);
 
   fmt::print("page fault timing:\n");
   fmt::print("start->HandleFault     {} ns\n",
@@ -95,4 +106,6 @@ TEST(PageFault, PageFault)
   fmt::print("HandleFault->end       {} ns\n",
              difference_in_nanoseconds(pfjit.m_post_unprotect_time, end));
   fmt::print("total                  {} ns\n", difference_in_nanoseconds(start, end));
+
+  system.GetJitInterface().SetJit(nullptr);
 }

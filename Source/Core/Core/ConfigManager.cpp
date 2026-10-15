@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <climits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -30,6 +31,7 @@
 #include "Common/StringUtil.h"
 #include "Common/Version.h"
 
+#include "Core/AchievementManager.h"
 #include "Core/Boot/Boot.h"
 #include "Core/CommonTitles.h"
 #include "Core/Config/DefaultLocale.h"
@@ -42,8 +44,11 @@
 #include "Core/HLE/HLE.h"
 #include "Core/HW/DVD/DVDInterface.h"
 #include "Core/HW/EXI/EXI_Device.h"
+#include "Core/HW/GCKeyboard.h"
+#include "Core/HW/GCPad.h"
 #include "Core/HW/SI/SI.h"
 #include "Core/HW/SI/SI_Device.h"
+#include "Core/HW/Wiimote.h"
 #include "Core/Host.h"
 #include "Core/IOS/ES/ES.h"
 #include "Core/IOS/ES/Formats.h"
@@ -52,6 +57,8 @@
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
 #include "Core/TitleDatabase.h"
+#include "Core/WC24PatchEngine.h"
+
 #include "VideoCommon/HiresTextures.h"
 
 #include "DiscIO/Enums.h"
@@ -96,24 +103,68 @@ void SConfig::LoadSettings()
   Config::Load();
 }
 
+const std::string SConfig::GetGameID() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_game_id;
+}
+
+const std::string SConfig::GetGameTDBID() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_gametdb_id;
+}
+
+const std::string SConfig::GetTitleName() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_title_name;
+}
+
+const std::string SConfig::GetTitleDescription() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_title_description;
+}
+
+std::string SConfig::GetTriforceID() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_triforce_id;
+}
+
+u64 SConfig::GetTitleID() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_title_id;
+}
+
+u16 SConfig::GetRevision() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_revision;
+}
+
 void SConfig::ResetRunningGameMetadata()
 {
-  SetRunningGameMetadata("00000000", "", 0, 0, DiscIO::Region::Unknown);
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  SetRunningGameMetadata("00000000", "", "", 0, 0, DiscIO::Region::Unknown);
 }
 
 void SConfig::SetRunningGameMetadata(const DiscIO::Volume& volume,
                                      const DiscIO::Partition& partition)
 {
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
   if (partition == volume.GetGamePartition())
   {
-    SetRunningGameMetadata(volume.GetGameID(), volume.GetGameTDBID(),
+    SetRunningGameMetadata(volume.GetGameID(), volume.GetGameTDBID(), volume.GetTriforceID(),
                            volume.GetTitleID().value_or(0), volume.GetRevision().value_or(0),
                            volume.GetRegion());
   }
   else
   {
-    SetRunningGameMetadata(volume.GetGameID(partition), volume.GetGameTDBID(),
-                           volume.GetTitleID(partition).value_or(0),
+    SetRunningGameMetadata(volume.GetGameID(partition), volume.GetGameTDBID(partition),
+                           volume.GetTriforceID(), volume.GetTitleID(partition).value_or(0),
                            volume.GetRevision(partition).value_or(0), volume.GetRegion());
   }
 
@@ -143,6 +194,7 @@ void SConfig::SetRunningGameMetadata(const DiscIO::Volume& volume,
 
 void SConfig::SetRunningGameMetadata(const IOS::ES::TMDReader& tmd, DiscIO::Platform platform)
 {
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
   const u64 tmd_title_id = tmd.GetTitleId();
 
   // If we're launching a disc game, we want to read the revision from
@@ -153,23 +205,28 @@ void SConfig::SetRunningGameMetadata(const IOS::ES::TMDReader& tmd, DiscIO::Plat
       !Core::System::GetInstance().GetDVDInterface().UpdateRunningGameMetadata(tmd_title_id))
   {
     // If not launching a disc game, just read everything from the TMD.
-    SetRunningGameMetadata(tmd.GetGameID(), tmd.GetGameTDBID(), tmd_title_id, tmd.GetTitleVersion(),
-                           tmd.GetRegion());
+    SetRunningGameMetadata(tmd.GetGameID(), tmd.GetGameTDBID(), "", tmd_title_id,
+                           tmd.GetTitleVersion(), tmd.GetRegion());
   }
 }
 
 void SConfig::SetRunningGameMetadata(const std::string& game_id)
 {
-  SetRunningGameMetadata(game_id, "", 0, 0, DiscIO::Region::Unknown);
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  SetRunningGameMetadata(game_id, "", "", 0, 0, DiscIO::Region::Unknown);
 }
 
 void SConfig::SetRunningGameMetadata(const std::string& game_id, const std::string& gametdb_id,
-                                     u64 title_id, u16 revision, DiscIO::Region region)
+                                     std::string triforce_id, u64 title_id, u16 revision,
+                                     DiscIO::Region region)
 {
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
   const bool was_changed = m_game_id != game_id || m_gametdb_id != gametdb_id ||
-                           m_title_id != title_id || m_revision != revision;
+                           m_triforce_id != triforce_id || m_title_id != title_id ||
+                           m_revision != revision;
   m_game_id = game_id;
   m_gametdb_id = gametdb_id;
+  m_triforce_id = triforce_id;
   m_title_id = title_id;
   m_revision = revision;
 
@@ -197,47 +254,84 @@ void SConfig::SetRunningGameMetadata(const std::string& game_id, const std::stri
     return;
   }
 
+  AchievementManager::GetInstance().CloseGame();
+
   const Core::TitleDatabase title_database;
-  const DiscIO::Language language = GetLanguageAdjustedForRegion(bWii, region);
-  m_title_name = title_database.GetTitleName(m_gametdb_id, language);
+  auto& system = Core::System::GetInstance();
+  const DiscIO::Language language = GetLanguageAdjustedForRegion(system.IsWii(), region);
+  m_title_name = title_database.GetTitleName(m_gametdb_id, m_triforce_id, language);
   m_title_description = title_database.Describe(m_gametdb_id, language);
   NOTICE_LOG_FMT(CORE, "Active title: {}", m_title_description);
   Host_TitleChanged();
-  if (Core::IsRunning())
-  {
-    Core::UpdateTitle();
-  }
+
+  const bool is_running_or_starting = Core::IsRunningOrStarting(system);
+  if (is_running_or_starting)
+    Core::UpdateTitle(system);
 
   Config::AddLayer(ConfigLoaders::GenerateGlobalGameConfigLoader(game_id, revision));
   Config::AddLayer(ConfigLoaders::GenerateLocalGameConfigLoader(game_id, revision));
 
-  if (Core::IsRunning())
+  if (is_running_or_starting)
     DolphinAnalytics::Instance().ReportGameStart();
 }
 
-void SConfig::OnNewTitleLoad(const Core::CPUThreadGuard& guard)
+void SConfig::OnESTitleChanged()
 {
-  if (!Core::IsRunning())
+  auto& system = Core::System::GetInstance();
+  Pad::LoadConfig();
+  Keyboard::LoadConfig();
+  if (system.IsWii() && !Config::Get(Config::MAIN_BLUETOOTH_PASSTHROUGH_ENABLED))
+  {
+    Wiimote::LoadConfig();
+  }
+
+  ReloadTextures(system);
+}
+
+void SConfig::OnTitleDirectlyBooted(const Core::CPUThreadGuard& guard)
+{
+  auto& system = guard.GetSystem();
+  if (!Core::IsRunningOrStarting(system))
     return;
 
-  if (!g_symbolDB.IsEmpty())
+  auto& ppc_symbol_db = system.GetPPCSymbolDB();
+  if (!ppc_symbol_db.IsEmpty())
   {
-    g_symbolDB.Clear();
-    Host_NotifyMapLoaded();
+    ppc_symbol_db.Clear();
+    Host_PPCSymbolsChanged();
   }
-  CBoot::LoadMapFromFilename(guard);
-  auto& system = Core::System::GetInstance();
+  CBoot::LoadMapFromFilename(guard, ppc_symbol_db);
   HLE::Reload(system);
-  PatchEngine::Reload();
+
+  PatchEngine::Reload(system);
+  WC24PatchEngine::Reload();
+
+  // Note: Wii is handled by ES title change
+  if (!system.IsWii())
+  {
+    ReloadTextures(system);
+  }
+}
+
+void SConfig::ReloadTextures(Core::System& system)
+{
+  Pad::GenerateDynamicInputTextures();
+  Keyboard::GenerateDynamicInputTextures();
+  if (system.IsWii() && !Config::Get(Config::MAIN_BLUETOOTH_PASSTHROUGH_ENABLED))
+  {
+    Wiimote::GenerateDynamicInputTextures();
+  }
+
   HiresTexture::Update();
 }
 
 void SConfig::LoadDefaults()
 {
-  bAutomaticStart = false;
   bBootToPause = false;
 
-  bWii = false;
+  auto& system = Core::System::GetInstance();
+  system.SetIsWii(false);
+  system.SetIsTriforce(false);
 
   ResetRunningGameMetadata();
 }
@@ -253,11 +347,15 @@ std::string SConfig::MakeGameID(std::string_view file_name)
 
 struct SetGameMetadata
 {
-  SetGameMetadata(SConfig* config_, DiscIO::Region* region_) : config(config_), region(region_) {}
+  SetGameMetadata(SConfig* config_, Core::System& system_, DiscIO::Region* region_)
+      : config(config_), system(system_), region(region_)
+  {
+  }
   bool operator()(const BootParameters::Disc& disc) const
   {
     *region = disc.volume->GetRegion();
-    config->bWii = disc.volume->GetVolumeType() == DiscIO::Platform::WiiDisc;
+    system.SetIsWii(disc.volume->GetVolumeType() == DiscIO::Platform::WiiDisc);
+    system.SetIsTriforce(disc.volume->GetVolumeType() == DiscIO::Platform::Triforce);
     config->m_disc_booted_from_game_list = true;
     config->SetRunningGameMetadata(*disc.volume, disc.volume->GetGamePartition());
     return true;
@@ -269,7 +367,7 @@ struct SetGameMetadata
       return false;
 
     *region = DiscIO::Region::Unknown;
-    config->bWii = executable.reader->IsWii();
+    system.SetIsWii(executable.reader->IsWii());
 
     // Strip the .elf/.dol file extension and directories before the name
     SplitPath(executable.path, nullptr, &config->m_debugger_game_id, nullptr);
@@ -278,7 +376,7 @@ struct SetGameMetadata
     std::string executable_path = executable.path;
     constexpr char BACKSLASH = '\\';
     constexpr char FORWARDSLASH = '/';
-    std::replace(executable_path.begin(), executable_path.end(), BACKSLASH, FORWARDSLASH);
+    std::ranges::replace(executable_path, BACKSLASH, FORWARDSLASH);
     config->SetRunningGameMetadata(SConfig::MakeGameID(PathToFileName(executable_path)));
 
     Host_TitleChanged();
@@ -301,7 +399,7 @@ struct SetGameMetadata
 
     const IOS::ES::TMDReader& tmd = wad.GetTMD();
     *region = tmd.GetRegion();
-    config->bWii = true;
+    system.SetIsWii(true);
     config->SetRunningGameMetadata(tmd, DiscIO::Platform::WiiWAD);
 
     return true;
@@ -310,7 +408,7 @@ struct SetGameMetadata
   bool operator()(const BootParameters::NANDTitle& nand_title) const
   {
     IOS::HLE::Kernel ios;
-    const IOS::ES::TMDReader tmd = ios.GetES()->FindInstalledTMD(nand_title.id);
+    const IOS::ES::TMDReader tmd = ios.GetESCore().FindInstalledTMD(nand_title.id);
     if (!tmd.IsValid() || !IOS::ES::IsChannel(nand_title.id))
     {
       PanicAlertFmtT("This title cannot be booted.");
@@ -318,7 +416,7 @@ struct SetGameMetadata
     }
 
     *region = tmd.GetRegion();
-    config->bWii = true;
+    system.SetIsWii(true);
     config->SetRunningGameMetadata(tmd, DiscIO::Platform::WiiWAD);
 
     return true;
@@ -327,7 +425,7 @@ struct SetGameMetadata
   bool operator()(const BootParameters::IPL& ipl) const
   {
     *region = ipl.region;
-    config->bWii = false;
+    system.SetIsWii(false);
     Host_TitleChanged();
 
     return true;
@@ -340,7 +438,7 @@ struct SetGameMetadata
       return false;
 
     *region = DiscIO::Region::NTSC_U;
-    config->bWii = dff_file->GetIsWii();
+    system.SetIsWii(dff_file->GetIsWii());
     Host_TitleChanged();
 
     return true;
@@ -348,14 +446,15 @@ struct SetGameMetadata
 
 private:
   SConfig* config;
+  Core::System& system;
   DiscIO::Region* region;
 };
 
-bool SConfig::SetPathsAndGameMetadata(const BootParameters& boot)
+bool SConfig::SetPathsAndGameMetadata(Core::System& system, const BootParameters& boot)
 {
-  m_is_mios = false;
+  system.SetIsMIOS(false);
   m_disc_booted_from_game_list = false;
-  if (!std::visit(SetGameMetadata(this, &m_region), boot.parameters))
+  if (!std::visit(SetGameMetadata(this, system, &m_region), boot.parameters))
     return false;
 
   if (m_region == DiscIO::Region::Unknown)
@@ -417,43 +516,85 @@ DiscIO::Language SConfig::GetLanguageAdjustedForRegion(bool wii, DiscIO::Region 
   return language;
 }
 
-IniFile SConfig::LoadDefaultGameIni() const
+Common::IniFile SConfig::LoadDefaultGameIni() const
 {
   return LoadDefaultGameIni(GetGameID(), m_revision);
 }
 
-IniFile SConfig::LoadLocalGameIni() const
+Common::IniFile SConfig::LoadLocalGameIni() const
 {
   return LoadLocalGameIni(GetGameID(), m_revision);
 }
 
-IniFile SConfig::LoadGameIni() const
+Common::IniFile SConfig::LoadGameIni() const
 {
   return LoadGameIni(GetGameID(), m_revision);
 }
 
-IniFile SConfig::LoadDefaultGameIni(const std::string& id, std::optional<u16> revision)
+Common::IniFile SConfig::LoadDefaultGameIni(const std::string& id, std::optional<u16> revision)
 {
-  IniFile game_ini;
+  Common::IniFile game_ini;
   for (const std::string& filename : ConfigLoaders::GetGameIniFilenames(id, revision))
     game_ini.Load(File::GetSysDirectory() + GAMESETTINGS_DIR DIR_SEP + filename, true);
   return game_ini;
 }
 
-IniFile SConfig::LoadLocalGameIni(const std::string& id, std::optional<u16> revision)
+Common::IniFile SConfig::LoadLocalGameIni(const std::string& id, std::optional<u16> revision)
 {
-  IniFile game_ini;
+  Common::IniFile game_ini;
   for (const std::string& filename : ConfigLoaders::GetGameIniFilenames(id, revision))
     game_ini.Load(File::GetUserPath(D_GAMESETTINGS_IDX) + filename, true);
   return game_ini;
 }
 
-IniFile SConfig::LoadGameIni(const std::string& id, std::optional<u16> revision)
+Common::IniFile SConfig::LoadGameIni(const std::string& id, std::optional<u16> revision)
 {
-  IniFile game_ini;
+  Common::IniFile game_ini;
   for (const std::string& filename : ConfigLoaders::GetGameIniFilenames(id, revision))
     game_ini.Load(File::GetSysDirectory() + GAMESETTINGS_DIR DIR_SEP + filename, true);
   for (const std::string& filename : ConfigLoaders::GetGameIniFilenames(id, revision))
     game_ini.Load(File::GetUserPath(D_GAMESETTINGS_IDX) + filename, true);
   return game_ini;
+}
+
+std::string SConfig::GetGameTDBImageRegionCode(bool wii, DiscIO::Region region) const
+{
+  switch (region)
+  {
+  case DiscIO::Region::NTSC_J:
+  {
+    // Taiwanese games share the Japanese region code however their title ID ends with 'W'.
+    // GameTDB differentiates the covers using the code "ZH".
+    if (m_game_id.size() >= 4 && m_game_id.at(3) == 'W')
+      return "ZH";
+
+    return "JA";
+  }
+  case DiscIO::Region::NTSC_U:
+    return "US";
+  case DiscIO::Region::NTSC_K:
+    return "KO";
+  case DiscIO::Region::PAL:
+  {
+    const auto user_lang = GetCurrentLanguage(wii);
+    switch (user_lang)
+    {
+    case DiscIO::Language::German:
+      return "DE";
+    case DiscIO::Language::French:
+      return "FR";
+    case DiscIO::Language::Spanish:
+      return "ES";
+    case DiscIO::Language::Italian:
+      return "IT";
+    case DiscIO::Language::Dutch:
+      return "NL";
+    case DiscIO::Language::English:
+    default:
+      return "EN";
+    }
+  }
+  default:
+    return "EN";
+  }
 }

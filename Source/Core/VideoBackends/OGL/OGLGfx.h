@@ -36,7 +36,8 @@ public:
                                                    const void* cache_data = nullptr,
                                                    size_t cache_data_length = 0) override;
   std::unique_ptr<AbstractFramebuffer>
-  CreateFramebuffer(AbstractTexture* color_attachment, AbstractTexture* depth_attachment) override;
+  CreateFramebuffer(AbstractTexture* color_attachment, AbstractTexture* depth_attachment,
+                    std::vector<AbstractTexture*> additional_color_attachments) override;
 
   void SetPipeline(const AbstractPipeline* pipeline) override;
   void SetFramebuffer(AbstractFramebuffer* framebuffer) override;
@@ -48,7 +49,7 @@ public:
   void SetScissorRect(const MathUtil::Rectangle<int>& rc) override;
   void SetTexture(u32 index, const AbstractTexture* texture) override;
   void SetSamplerState(u32 index, const SamplerState& state) override;
-  void SetComputeImageTexture(AbstractTexture* texture, bool read, bool write) override;
+  void SetComputeImageTexture(u32 index, AbstractTexture* texture, bool read, bool write) override;
   void UnbindTexture(const AbstractTexture* texture) override;
   void SetViewport(float x, float y, float width, float height, float near_depth,
                    float far_depth) override;
@@ -56,7 +57,7 @@ public:
   void DrawIndexed(u32 base_index, u32 num_indices, u32 base_vertex) override;
   void DispatchComputeShader(const AbstractShader* shader, u32 groupsize_x, u32 groupsize_y,
                              u32 groupsize_z, u32 groups_x, u32 groups_y, u32 groups_z) override;
-  void BindBackbuffer(const ClearColor& clear_color = {}) override;
+  bool BindBackbuffer(const ClearColor& clear_color = {}) override;
   void PresentBackbuffer() override;
 
   void BeginUtilityDrawing() override;
@@ -102,6 +103,8 @@ private:
   std::unique_ptr<GLContext> m_main_gl_context;
   std::unique_ptr<OGLFramebuffer> m_system_framebuffer;
   std::array<const OGLTexture*, VideoCommon::MAX_PIXEL_SHADER_SAMPLERS> m_bound_textures{};
+  std::array<const AbstractTexture*, VideoCommon::MAX_COMPUTE_SHADER_SAMPLERS>
+      m_bound_image_textures{};
   AbstractTexture* m_bound_image_texture = nullptr;
   RasterizationState m_current_rasterization_state;
   DepthState m_current_depth_state;

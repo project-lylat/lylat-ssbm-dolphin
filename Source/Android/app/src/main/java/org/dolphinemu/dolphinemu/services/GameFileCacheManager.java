@@ -2,12 +2,18 @@
 
 package org.dolphinemu.dolphinemu.services;
 
+import android.os.Handler;
+import android.os.Looper;
+
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
 
+import org.dolphinemu.dolphinemu.features.settings.model.BooleanSetting;
+import org.dolphinemu.dolphinemu.features.settings.model.ConfigChangedCallback;
 import org.dolphinemu.dolphinemu.model.GameFile;
 import org.dolphinemu.dolphinemu.model.GameFileCache;
 import org.dolphinemu.dolphinemu.ui.platform.Platform;
+import org.dolphinemu.dolphinemu.ui.platform.PlatformTab;
 import org.dolphinemu.dolphinemu.utils.AfterDirectoryInitializationRunner;
 
 import java.util.ArrayList;
@@ -26,6 +32,7 @@ public final class GameFileCacheManager
           new MutableLiveData<>(new GameFile[]{});
   private static boolean sFirstLoadDone = false;
   private static boolean sRunRescanAfterLoad = false;
+  private static boolean sRecursiveScanEnabled;
 
   private static final ExecutorService sExecutor = Executors.newFixedThreadPool(1);
   private static final MutableLiveData<Boolean> sLoadInProgress = new MutableLiveData<>(false);
@@ -40,18 +47,18 @@ public final class GameFileCacheManager
     return sGameFiles;
   }
 
-  public static List<GameFile> getGameFilesForPlatform(Platform platform)
+  public static List<GameFile> getGameFilesForPlatformTab(PlatformTab platformTab)
   {
     GameFile[] allGames = sGameFiles.getValue();
-    ArrayList<GameFile> platformGames = new ArrayList<>();
+    ArrayList<GameFile> platformTabGames = new ArrayList<>();
     for (GameFile game : allGames)
     {
-      if (Platform.fromNativeInt(game.getPlatform()) == platform)
+      if (Platform.fromInt(game.getPlatform()).toPlatformTab() == platformTab)
       {
-        platformGames.add(game);
+        platformTabGames.add(game);
       }
     }
-    return platformGames;
+    return platformTabGames;
   }
 
   public static GameFile getGameFileByGameId(String gameId)
@@ -154,8 +161,8 @@ public final class GameFileCacheManager
 
   public static GameFile addOrGet(String gamePath)
   {
-    // Common case: The game is in the cache, so just grab it from there.
-    // (Actually, addOrGet already checks for this case, but we want to avoid calling it if possible
+    // Common case: The game is in the cache, so just grab it from there. (GameFileCache.addOrGet
+    // actually already checks for this case, but we want to avoid calling it if possible
     // because the executor thread may hold a lock on sGameFileCache for extended periods of time.)
     GameFile[] allGames = sGameFiles.getValue();
     for (GameFile game : allGames)
@@ -182,6 +189,7 @@ public final class GameFileCacheManager
     if (!sFirstLoadDone)
     {
       sFirstLoadDone = true;
+      setUpAutomaticRescan();
       sGameFileCache.load();
       if (sGameFileCache.getSize() != 0)
       {
@@ -191,6 +199,8 @@ public final class GameFileCacheManager
 
     if (sRunRescanAfterLoad)
     {
+      // Without this, there will be a short blip where the loading indicator in the GUI disappears
+      // because neither sLoadInProgress nor sRescanInProgress is true
       sRescanInProgress.postValue(true);
     }
 
@@ -257,5 +267,20 @@ public final class GameFileCacheManager
     {
       sGameFileCache = new GameFileCache();
     }
+  }
+
+  private static void setUpAutomaticRescan()
+  {
+    sRecursiveScanEnabled = BooleanSetting.MAIN_RECURSIVE_ISO_PATHS.getBoolean();
+    new ConfigChangedCallback(() ->
+            new Handler(Looper.getMainLooper()).post(() ->
+            {
+              boolean recursiveScanEnabled = BooleanSetting.MAIN_RECURSIVE_ISO_PATHS.getBoolean();
+              if (sRecursiveScanEnabled != recursiveScanEnabled)
+              {
+                sRecursiveScanEnabled = recursiveScanEnabled;
+                startRescan();
+              }
+            }));
   }
 }

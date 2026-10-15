@@ -18,11 +18,13 @@
 #include <jni.h>
 
 #include "Common/Assert.h"
+#include "Common/Contains.h"
 #include "Common/Logging/Log.h"
 #include "Common/StringUtil.h"
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 
+#include "InputCommon/ControllerInterface/InputBackend.h"
 #include "jni/AndroidCommon/AndroidCommon.h"
 #include "jni/AndroidCommon/IDCache.h"
 #include "jni/Input/CoreDevice.h"
@@ -37,7 +39,6 @@ jclass s_input_device_class;
 jmethodID s_input_device_get_device_ids;
 jmethodID s_input_device_get_device;
 jmethodID s_input_device_get_controller_number;
-jmethodID s_input_device_get_id;
 jmethodID s_input_device_get_motion_ranges;
 jmethodID s_input_device_get_name;
 jmethodID s_input_device_get_sources;
@@ -50,7 +51,7 @@ jmethodID s_motion_range_get_min;
 jmethodID s_motion_range_get_source;
 
 jclass s_input_event_class;
-jmethodID s_input_event_get_device;
+jmethodID s_input_event_get_device_id;
 
 jclass s_key_event_class;
 jmethodID s_key_event_get_action;
@@ -445,6 +446,23 @@ std::shared_ptr<ciface::Core::Device> FindDevice(jint device_id)
 
 namespace ciface::Android
 {
+class InputBackend final : public ciface::InputBackend
+{
+public:
+  InputBackend(ControllerInterface* controller_interface);
+  ~InputBackend();
+  void PopulateDevices() override;
+
+private:
+  void AddDevice(JNIEnv* env, int device_id);
+  void AddSensorDevice(JNIEnv* env);
+};
+
+std::unique_ptr<ciface::InputBackend> CreateInputBackend(ControllerInterface* controller_interface)
+{
+  return std::make_unique<InputBackend>(controller_interface);
+}
+
 class AndroidInput : public Core::Device::Input
 {
 public:
@@ -676,7 +694,7 @@ private:
         negative = new AndroidAxis(source, axis, true);
 
       if (positive && negative)
-        AddAnalogInputs(positive, negative);
+        AddFullAnalogSurfaceInputs(positive, negative);
       else if (positive || negative)
         AddInput(positive ? positive : negative);
     }
@@ -780,7 +798,8 @@ static jintArray CreateKeyCodesArray(JNIEnv* env)
   return keycodes_array;
 }
 
-void Init()
+InputBackend::InputBackend(ControllerInterface* controller_interface)
+    : ciface::InputBackend(controller_interface)
 {
   JNIEnv* env = IDCache::GetEnvForThread();
 
@@ -798,7 +817,6 @@ void Init()
       env->GetStaticMethodID(s_input_device_class, "getDevice", "(I)Landroid/view/InputDevice;");
   s_input_device_get_controller_number =
       env->GetMethodID(s_input_device_class, "getControllerNumber", "()I");
-  s_input_device_get_id = env->GetMethodID(s_input_device_class, "getId", "()I");
   s_input_device_get_motion_ranges =
       env->GetMethodID(s_input_device_class, "getMotionRanges", "()Ljava/util/List;");
   s_input_device_get_name =
@@ -817,18 +835,20 @@ void Init()
 
   const jclass input_event_class = env->FindClass("android/view/InputEvent");
   s_input_event_class = reinterpret_cast<jclass>(env->NewGlobalRef(input_event_class));
-  s_input_event_get_device =
-      env->GetMethodID(s_input_event_class, "getDevice", "()Landroid/view/InputDevice;");
+  s_input_event_get_device_id = env->GetMethodID(s_input_event_class, "getDeviceId", "()I");
+  env->DeleteLocalRef(input_event_class);
 
   const jclass key_event_class = env->FindClass("android/view/KeyEvent");
   s_key_event_class = reinterpret_cast<jclass>(env->NewGlobalRef(key_event_class));
   s_key_event_get_action = env->GetMethodID(s_key_event_class, "getAction", "()I");
   s_key_event_get_keycode = env->GetMethodID(s_key_event_class, "getKeyCode", "()I");
+  env->DeleteLocalRef(key_event_class);
 
   const jclass motion_event_class = env->FindClass("android/view/MotionEvent");
   s_motion_event_class = reinterpret_cast<jclass>(env->NewGlobalRef(motion_event_class));
   s_motion_event_get_axis_value = env->GetMethodID(s_motion_event_class, "getAxisValue", "(I)F");
   s_motion_event_get_source = env->GetMethodID(s_motion_event_class, "getSource", "()I");
+  env->DeleteLocalRef(motion_event_class);
 
   const jclass controller_interface_class =
       env->FindClass("org/dolphinemu/dolphinemu/features/input/model/ControllerInterface");
@@ -847,6 +867,7 @@ void Init()
       "()Lorg/dolphinemu/dolphinemu/features/input/model/DolphinVibratorManager;");
   s_controller_interface_vibrate =
       env->GetStaticMethodID(s_controller_interface_class, "vibrate", "(Landroid/os/Vibrator;)V");
+  env->DeleteLocalRef(controller_interface_class);
 
   const jclass sensor_event_listener_class =
       env->FindClass("org/dolphinemu/dolphinemu/features/input/model/DolphinSensorEventListener");
@@ -864,6 +885,7 @@ void Init()
       env->GetMethodID(s_sensor_event_listener_class, "getAxisNames", "()[Ljava/lang/String;");
   s_sensor_event_listener_get_negative_axes =
       env->GetMethodID(s_sensor_event_listener_class, "getNegativeAxes", "()[Z");
+  env->DeleteLocalRef(sensor_event_listener_class);
 
   const jclass dolphin_vibrator_manager_class =
       env->FindClass("org/dolphinemu/dolphinemu/features/input/model/DolphinVibratorManager");
@@ -873,6 +895,7 @@ void Init()
       env->GetMethodID(s_dolphin_vibrator_manager_class, "getVibrator", "(I)Landroid/os/Vibrator;");
   s_dolphin_vibrator_manager_get_vibrator_ids =
       env->GetMethodID(s_dolphin_vibrator_manager_class, "getVibratorIds", "()[I");
+  env->DeleteLocalRef(dolphin_vibrator_manager_class);
 
   jintArray keycodes_array = CreateKeyCodesArray(env);
   s_keycodes_array = reinterpret_cast<jintArray>(env->NewGlobalRef(keycodes_array));
@@ -882,7 +905,7 @@ void Init()
                             s_controller_interface_register_input_device_listener);
 }
 
-void Shutdown()
+InputBackend::~InputBackend()
 {
   JNIEnv* env = IDCache::GetEnvForThread();
 
@@ -900,10 +923,16 @@ void Shutdown()
   env->DeleteGlobalRef(s_keycodes_array);
 }
 
-static void AddDevice(JNIEnv* env, int device_id)
+void InputBackend::AddDevice(JNIEnv* env, int device_id)
 {
   jobject input_device =
       env->CallStaticObjectMethod(s_input_device_class, s_input_device_get_device, device_id);
+
+  if (!input_device)
+  {
+    ERROR_LOG_FMT(CONTROLLERINTERFACE, "Could not find device with ID {}", device_id);
+    return;
+  }
 
   auto device = std::make_shared<AndroidDevice>(env, input_device);
 
@@ -912,7 +941,7 @@ static void AddDevice(JNIEnv* env, int device_id)
   if (device->Inputs().empty() && device->Outputs().empty())
     return;
 
-  g_controller_interface.AddDevice(device);
+  GetControllerInterface().AddDevice(device);
 
   Core::DeviceQualifier qualifier;
   qualifier.FromDevice(device.get());
@@ -927,7 +956,7 @@ static void AddDevice(JNIEnv* env, int device_id)
   env->DeleteLocalRef(j_qualifier);
 }
 
-static void AddSensorDevice(JNIEnv* env)
+void InputBackend::AddSensorDevice(JNIEnv* env)
 {
   // Device sensors (accelerometer, etc.) aren't associated with any Android InputDevice.
   // Create an otherwise empty Dolphin input device so that they have somewhere to live.
@@ -937,7 +966,7 @@ static void AddSensorDevice(JNIEnv* env)
   if (device->Inputs().empty() && device->Outputs().empty())
     return;
 
-  g_controller_interface.AddDevice(device);
+  GetControllerInterface().AddDevice(device);
 
   Core::DeviceQualifier qualifier;
   qualifier.FromDevice(device.get());
@@ -950,7 +979,7 @@ static void AddSensorDevice(JNIEnv* env)
   env->DeleteLocalRef(j_qualifier);
 }
 
-void PopulateDevices()
+void InputBackend::PopulateDevices()
 {
   INFO_LOG_FMT(CONTROLLERINTERFACE, "Android populating devices");
 
@@ -990,9 +1019,7 @@ Java_org_dolphinemu_dolphinemu_features_input_model_ControllerInterface_dispatch
     return JNI_FALSE;
   }
 
-  const jobject input_device = env->CallObjectMethod(key_event, s_input_event_get_device);
-  const jint device_id = env->CallIntMethod(input_device, s_input_device_get_id);
-  env->DeleteLocalRef(input_device);
+  const jint device_id = env->CallIntMethod(key_event, s_input_event_get_device_id);
   const std::shared_ptr<ciface::Core::Device> device = FindDevice(device_id);
   if (!device)
     return JNI_FALSE;
@@ -1022,9 +1049,7 @@ JNIEXPORT jboolean JNICALL
 Java_org_dolphinemu_dolphinemu_features_input_model_ControllerInterface_dispatchGenericMotionEvent(
     JNIEnv* env, jclass, jobject motion_event)
 {
-  const jobject input_device = env->CallObjectMethod(motion_event, s_input_event_get_device);
-  const jint device_id = env->CallIntMethod(input_device, s_input_device_get_id);
-  env->DeleteLocalRef(input_device);
+  const jint device_id = env->CallIntMethod(motion_event, s_input_event_get_device_id);
   const std::shared_ptr<ciface::Core::Device> device = FindDevice(device_id);
   if (!device)
     return JNI_FALSE;
@@ -1108,8 +1133,7 @@ Java_org_dolphinemu_dolphinemu_features_input_model_ControllerInterface_notifySe
 
   for (ciface::Core::Device::Input* input : device->Inputs())
   {
-    const std::string input_name = input->GetName();
-    if (std::find(axis_names.begin(), axis_names.end(), input_name) != axis_names.end())
+    if (Common::Contains(axis_names, input->GetName()))
     {
       auto casted_input = static_cast<ciface::Android::AndroidSensorAxis*>(input);
       casted_input->NotifyIsSuspended(static_cast<bool>(suspended));

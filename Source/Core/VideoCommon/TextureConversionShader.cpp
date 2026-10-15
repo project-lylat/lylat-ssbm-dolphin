@@ -62,7 +62,7 @@ static void WriteHeader(ShaderCode& code, APIType api_type)
              "  float2 clamp_tb;\n"
              "  uint3 filter_coefficients;\n"
              "}};\n");
-  if (g_ActiveConfig.backend_info.bSupportsGeometryShaders)
+  if (g_backend_info.bSupportsGeometryShaders)
   {
     code.Write("VARYING_LOCATION(0) in VertexData {{\n"
                "  float3 v_tex0;\n"
@@ -124,7 +124,7 @@ static void WriteSampleFunction(ShaderCode& code, const EFBCopyParams& params, A
 
   if (params.depth)
   {
-    if (!g_ActiveConfig.backend_info.bSupportsReversedDepthRange)
+    if (!g_backend_info.bSupportsReversedDepthRange)
       code.Write("  tex_sample.x = 1.0 - tex_sample.x;\n");
 
     code.Write("  uint depth = uint(tex_sample.x * 16777216.0);\n"
@@ -202,9 +202,9 @@ static void WriteSwizzler(ShaderCode& code, const EFBCopyParams& params, APIType
   const int blkH = TexDecoder_GetEFBCopyBlockHeightInTexels(params.copy_format);
   int samples = GetEncodedSampleCount(params.copy_format);
 
-  code.Write("  int x_block_position = (uv1.x >> {}) << {};\n", IntLog2(blkH * blkW / samples),
-             IntLog2(blkW));
-  code.Write("  int y_block_position = uv1.y << {};\n", IntLog2(blkH));
+  code.Write("  int x_block_position = (uv1.x >> {}) << {};\n",
+             MathUtil::IntLog2(blkH * blkW / samples), MathUtil::IntLog2(blkW));
+  code.Write("  int y_block_position = uv1.y << {};\n", MathUtil::IntLog2(blkH));
   if (samples == 1)
   {
     // With samples == 1, we write out pairs of blocks; one A8R8, one G8B8.
@@ -212,9 +212,10 @@ static void WriteSwizzler(ShaderCode& code, const EFBCopyParams& params, APIType
     samples = 2;
   }
   code.Write("  int offset_in_block = uv1.x & {};\n", (blkH * blkW / samples) - 1);
-  code.Write("  int y_offset_in_block = offset_in_block >> {};\n", IntLog2(blkW / samples));
+  code.Write("  int y_offset_in_block = offset_in_block >> {};\n",
+             MathUtil::IntLog2(blkW / samples));
   code.Write("  int x_offset_in_block = (offset_in_block & {}) << {};\n", (blkW / samples) - 1,
-             IntLog2(samples));
+             MathUtil::IntLog2(samples));
 
   code.Write("  sampleUv.x = x_block_position + x_offset_in_block;\n"
              "  sampleUv.y = y_block_position + y_offset_in_block;\n");
@@ -1190,7 +1191,7 @@ float4 DecodePixel(int val)
   ss << "  int texel_buffer_offset;\n";
   ss << "};\n";
 
-  if (g_ActiveConfig.backend_info.bSupportsGeometryShaders)
+  if (g_backend_info.bSupportsGeometryShaders)
   {
     ss << "VARYING_LOCATION(0) in VertexData {\n";
     ss << "  float3 v_tex0;\n";

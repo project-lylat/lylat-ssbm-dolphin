@@ -93,7 +93,7 @@ ShaderCode GenerateGeometryShaderCode(APIType api_type, const ShaderHostConfig& 
 
   // uniforms
   if (api_type == APIType::OpenGL || api_type == APIType::Vulkan)
-    out.Write("UBO_BINDING(std140, 3) uniform GSBlock {{\n");
+    out.Write("UBO_BINDING(std140, 4) uniform GSBlock {{\n");
   else
     out.Write("cbuffer GSBlock {{\n");
 
@@ -378,8 +378,8 @@ void EnumerateGeometryShaderUids(const std::function<void(const GeometryShaderUi
   GeometryShaderUid uid;
 
   const std::array<PrimitiveType, 3> primitive_lut = {
-      {g_ActiveConfig.backend_info.bSupportsPrimitiveRestart ? PrimitiveType::TriangleStrip :
-                                                               PrimitiveType::Triangles,
+      {g_backend_info.bSupportsPrimitiveRestart ? PrimitiveType::TriangleStrip :
+                                                  PrimitiveType::Triangles,
        PrimitiveType::Lines, PrimitiveType::Points}};
   for (PrimitiveType primitive : primitive_lut)
   {
