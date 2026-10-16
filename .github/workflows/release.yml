@@ -11,7 +11,9 @@ jobs:
     steps:
       - name: 'Get version'
         run: |
-          echo "VERSION=$(echo ${{ github.ref }} | cut -d "v" -f 2)" >> $GITHUB_ENV
+          # The tag name as given; a leading v (v4.1.0) is dropped.
+          TAG="${{ github.ref_name }}"
+          echo "VERSION=${TAG#v}" >> $GITHUB_ENV
       - name: Download latest artifacts
         uses: dawidd6/action-download-artifact@v6
         with:
@@ -23,9 +25,9 @@ jobs:
           rm -rf *playback*
           find ./ -mindepth 2 -type f -exec mv -t ./ -i '{}' +
           find . -type d -empty -delete
-          unzip *linux* && rm -rf Sys && mv *linux* "Lylat-Mainline-${{ env.VERSION }}-Linux.zip"
-          mv *.dmg "Lylat-Mainline-${{ env.VERSION }}-Mac.dmg"
-          mv *windows* "Lylat-Mainline-${{ env.VERSION }}-Win.zip"
+          unzip *linux* && rm -rf Sys && mv *linux* "Lylat-Mainline-ssbm-${{ env.VERSION }}-Linux.zip"
+          mv *.dmg "Lylat-Mainline-ssbm-${{ env.VERSION }}-Mac.dmg"
+          mv *windows* "Lylat-Mainline-ssbm-${{ env.VERSION }}-Win.zip"
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@v2
         with:
