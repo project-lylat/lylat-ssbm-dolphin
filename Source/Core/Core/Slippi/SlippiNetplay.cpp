@@ -22,17 +22,52 @@
 #include "Core/Slippi/SlippiGame.h"
 #include "Core/Slippi/SlippiNetplay.h"
 #include "Core/Slippi/SlippiPremadeText.h"
+#include "InputCommon/GCAdapter.h"
 #include "VideoCommon/OnScreenDisplay.h"
 #include "VideoCommon/VideoConfig.h"
+
+#include "SlippiRustExtensions.h"
 
 static std::mutex pad_mutex;
 static std::mutex ack_mutex;
 
+// The opponent sends one of these per game prep step and the game takes them off as it asks for
+// them, so only a few are ever waiting. This keeps a peer flooding complete step packets from
+// growing the queue forever.
+static constexpr size_t SLIPPI_GAME_PREP_STEP_QUEUE_MAX = 32;
+
 SlippiNetplayClient* SLIPPI_NETPLAY = nullptr;
+
+// The adapter read thread sends input suggestions through the live client. The pointer is set and
+// cleared under this mutex so the adapter thread never uses a client that has started tearing down.
+static std::mutex s_suggestion_sink_mutex;
+static SlippiNetplayClient* s_suggestion_sink = nullptr;
+
+// called from ---ADAPTER READ--- thread
+static void SendInputSuggestionForAdapterReport(const GCAdapter::AdapterReport& report)
+{
+  std::lock_guard<std::mutex> lk(s_suggestion_sink_mutex);
+  if (!s_suggestion_sink)
+    return;
+
+  SlippiInputSuggestion suggestion = slprs_input_suggestions_on_adapter_report(
+      report.game_poll_counts, report.payload, sizeof(report.payload));
+  if (suggestion.is_valid)
+  {
+    s_suggestion_sink->SendSlippiPadSuggestion(suggestion.target_frame, suggestion.seq,
+                                               suggestion.pad);
+  }
+}
 
 // called from ---GUI--- thread
 SlippiNetplayClient::~SlippiNetplayClient()
 {
+  {
+    std::lock_guard<std::mutex> lk(s_suggestion_sink_mutex);
+    if (s_suggestion_sink == this)
+      s_suggestion_sink = nullptr;
+  }
+
   m_do_loop.Clear();
   if (m_thread.joinable())
     m_thread.join();
@@ -151,6 +186,12 @@ SlippiNetplayClient::SlippiNetplayClient(std::vector<std::string> addrs, std::ve
                               std::memory_order_release);
 
   m_thread = std::thread(&SlippiNetplayClient::ThreadFunc, this);
+
+  GCAdapter::SetReportCallback(SendInputSuggestionForAdapterReport);
+  {
+    std::lock_guard<std::mutex> lk(s_suggestion_sink_mutex);
+    s_suggestion_sink = this;
+  }
 }
 
 // Make a dummy client
@@ -227,6 +268,11 @@ unsigned int SlippiNetplayClient::OnData(sf::Packet& packet, ENetPeer* peer)
       ERROR_LOG_FMT(SLIPPI_ONLINE, "Got packet with invalid player idx {}", p_idx);
       break;
     }
+
+    // We have told the other players which inputs we have for this player, so that can't change
+    // anymore
+    if (!player_active[packet_player_port].load(std::memory_order_acquire))
+      break;
 
     // This is the amount of bytes from the start of the packet where the pad data starts
     int pad_data_offset = 14;
@@ -334,14 +380,14 @@ unsigned int SlippiNetplayClient::OnData(sf::Packet& packet, ENetPeer* peer)
       inputs_to_copy = frame64 - static_cast<s64>(head_frame);
 
       // Check that the packet actually contains the data it claims to
-      if ((pad_data_offset + inputs_to_copy * SLIPPI_PAD_DATA_SIZE) >
+      if ((pad_data_offset + inputs_to_copy * SLIPPI_PAD_WIRE_SIZE) >
           static_cast<s64>(packet.getDataSize()))
       {
         ERROR_LOG_FMT(
             SLIPPI_ONLINE,
             "Netplay packet too small to read pad buffer. Size: {}, Inputs: {}, MinSize: {}",
             static_cast<int>(packet.getDataSize()), inputs_to_copy,
-            pad_data_offset + inputs_to_copy * SLIPPI_PAD_DATA_SIZE);
+            pad_data_offset + inputs_to_copy * SLIPPI_PAD_WIRE_SIZE);
         break;
       }
 
@@ -355,10 +401,8 @@ unsigned int SlippiNetplayClient::OnData(sf::Packet& packet, ENetPeer* peer)
 
       for (s64 i = inputs_to_copy - 1; i >= 0; i--)
       {
-        auto pad =
-            std::make_unique<SlippiPad>(static_cast<s32>(frame64 - i),
-                                        &packet_data[pad_data_offset + i * SLIPPI_PAD_DATA_SIZE]);
-        m_remote_pad_queue[p_idx].push_front(std::move(pad));
+        AddRemotePad(p_idx, static_cast<s32>(frame64 - i),
+                     &packet_data[pad_data_offset + i * SLIPPI_PAD_WIRE_SIZE]);
       }
 
       // Write checksum pad to keep track of latest remote checksum
@@ -366,6 +410,17 @@ unsigned int SlippiNetplayClient::OnData(sf::Packet& packet, ENetPeer* peer)
       e.frame = checksum_frame;
       e.value = checksum;
       remote_checksums[p_idx] = e;
+    }
+
+    // Let input suggestions check their predictions against the real inputs
+    {
+      auto packet_data = (const u8*)packet.getData();
+      for (s64 i = inputs_to_copy - 1; i >= 0; i--)
+      {
+        slprs_input_suggestions_on_remote_input(
+            p_idx, static_cast<s32>(static_cast<s64>(frame) - i),
+            &packet_data[pad_data_offset + i * SLIPPI_PAD_WIRE_SIZE]);
+      }
     }
 
     // Only ack if inputsToCopy is greater than 0. Otherwise we are receiving an old input and
@@ -437,8 +492,6 @@ unsigned int SlippiNetplayClient::OnData(sf::Packet& packet, ENetPeer* peer)
     ack_timers[p_idx].Pop();
 
     ping_us[p_idx] = Common::Timer::NowUs() - send_time;
-    ping_sample_sum_us.fetch_add(ping_us[p_idx], std::memory_order_relaxed);
-    ping_sample_count.fetch_add(1, std::memory_order_relaxed);
     if (Config::Get(Config::GFX_SHOW_NETPLAY_PING) && frame % SLIPPI_PING_DISPLAY_INTERVAL == 0 &&
         p_idx == 0)
     {
@@ -451,6 +504,103 @@ unsigned int SlippiNetplayClient::OnData(sf::Packet& packet, ENetPeer* peer)
       OSD::AddTypedMessage(OSD::MessageType::NetPlayPing, ping_display.str(), OSD::Duration::NORMAL,
                            OSD::Color::CYAN);
     }
+  }
+  break;
+
+  case NetPlay::MessageID::SLIPPI_PLAYER_DROP:
+  {
+    u8 sender_port;
+    u8 dropped_port;
+    s32 last_frame;
+    u8 input_count;
+    if (!(packet >> sender_port) || !(packet >> dropped_port) || !(packet >> last_frame) ||
+        !(packet >> input_count))
+    {
+      ERROR_LOG_FMT(SLIPPI_ONLINE, "Player drop packet too small to read header");
+      break;
+    }
+
+    // Message id, ports, last frame and input count come before the inputs
+    const size_t inputs_offset = 8;
+    if (packet.getDataSize() < inputs_offset + input_count * SLIPPI_PAD_WIRE_SIZE)
+    {
+      ERROR_LOG_FMT(SLIPPI_ONLINE, "Player drop packet too small to read inputs");
+      break;
+    }
+
+    if (sender_port == m_player_idx || sender_port == dropped_port || last_frame < 0 ||
+        PlayerIdxFromPort(sender_port) >= m_remote_player_count ||
+        PlayerIdxFromPort(dropped_port) >= m_remote_player_count)
+    {
+      ERROR_LOG_FMT(SLIPPI_ONLINE,
+                    "Got invalid player drop packet. Sender: {}, dropped: {}, last frame: {}",
+                    sender_port, dropped_port, last_frame);
+      break;
+    }
+
+    // The other players take care of removing us if this is about us. A player we already lost has
+    // no say, or else two players that lost their connection to each other would take each other
+    // out
+    if (dropped_port == m_player_idx || !player_active[sender_port].load(std::memory_order_acquire))
+    {
+      break;
+    }
+
+    // Losing a player to anyone means losing them to everyone, even if we are still connected to
+    // them. This also reports what we have for them to the other players
+    ForceDisconnectPlayer(dropped_port);
+    ProcessPlayerDrops();
+
+    // We already settled on this player's last input. If this has a newer one the players that got
+    // it in time now disagree with us, and the desync detection ends the game if that ends up
+    // mattering.
+    s32 despawn_frame = m_despawn_frames[dropped_port].load(std::memory_order_acquire);
+    if (despawn_frame != 0)
+    {
+      if (last_frame + SLIPPI_DROP_DESPAWN_FRAMES > despawn_frame)
+      {
+        WARN_LOG_FMT(SLIPPI_ONLINE,
+                     "[Netplay] Report about player {} came too late. Last frame: {}, despawn "
+                     "frame: {}",
+                     dropped_port, last_frame, despawn_frame);
+      }
+      break;
+    }
+
+    auto inputs = static_cast<const u8*>(packet.getData()) + inputs_offset;
+    AddPlayerDropReportInputs(PlayerIdxFromPort(dropped_port), last_frame, input_count, inputs);
+  }
+  break;
+
+  case NetPlay::MessageID::SLIPPI_PAD_SUGGESTION:
+  {
+    u8 packet_player_port;
+    s32 target_frame;
+    u32 seq;
+    if (!(packet >> packet_player_port) || !(packet >> target_frame) || !(packet >> seq))
+    {
+      ERROR_LOG_FMT(SLIPPI_ONLINE, "Input suggestion packet too small to read header");
+      break;
+    }
+
+    // Message id, port, target frame and seq come before the pad data
+    const size_t pad_data_offset = 10;
+    if (packet.getDataSize() < pad_data_offset + SLIPPI_PAD_INPUT_SIZE)
+    {
+      ERROR_LOG_FMT(SLIPPI_ONLINE, "Input suggestion packet too small to read pad");
+      break;
+    }
+
+    u8 p_idx = PlayerIdxFromPort(packet_player_port);
+    if (p_idx >= m_remote_player_count)
+    {
+      ERROR_LOG_FMT(SLIPPI_ONLINE, "Got input suggestion with invalid player idx {}", p_idx);
+      break;
+    }
+
+    auto packet_data = (const u8*)packet.getData();
+    slprs_input_suggestions_on_remote_suggestion(p_idx, target_frame, seq,
+                                                 &packet_data[pad_data_offset]);
   }
   break;
 
@@ -475,7 +625,12 @@ unsigned int SlippiNetplayClient::OnData(sf::Packet& packet, ENetPeer* peer)
 
       // Reset remote pad queue such that next inputs that we get are not compared to inputs from
       // last game
-      m_remote_pad_queue[idx].clear();
+      {
+        std::lock_guard<std::mutex> lk(pad_mutex);
+        m_remote_pad_queue[idx].clear();
+        m_remote_pad_history[idx].clear();
+      }
+      slprs_input_suggestions_reset_remote(idx);
     }
   }
   break;
@@ -488,8 +643,10 @@ unsigned int SlippiNetplayClient::OnData(sf::Packet& packet, ENetPeer* peer)
 
     if (!player_selection->error)
     {
-      // set message id to netplay instance
-      remote_chat_message_selection = std::move(player_selection);
+      // The CPU thread takes this in GetSlippiRemoteChatMessage
+      std::lock_guard<std::mutex> lk(m_chat_mutex);
+      m_remote_chat_message.message_id = player_selection->message_id;
+      m_remote_chat_message.player_idx = player_selection->player_idx;
     }
   }
   break;
@@ -505,13 +662,20 @@ unsigned int SlippiNetplayClient::OnData(sf::Packet& packet, ENetPeer* peer)
   case NetPlay::MessageID::SLIPPI_COMPLETE_STEP:
   {
     SlippiGamePrepStepResults results;
+    if (!(packet >> results.step_idx) || !(packet >> results.char_selection) ||
+        !(packet >> results.char_color_selection) || !(packet >> results.stage_selections[0]) ||
+        !(packet >> results.stage_selections[1]))
+    {
+      ERROR_LOG_FMT(SLIPPI_ONLINE, "Complete step packet too small to read step results");
+      break;
+    }
 
-    packet >> results.step_idx;
-    packet >> results.char_selection;
-    packet >> results.char_color_selection;
-    packet >> results.stage_selections[0];
-    packet >> results.stage_selections[1];
-
+    std::lock_guard<std::mutex> lk(m_game_prep_mutex);
+    if (game_prep_step_queue.size() >= SLIPPI_GAME_PREP_STEP_QUEUE_MAX)
+    {
+      WARN_LOG_FMT(SLIPPI_ONLINE, "Game prep step queue is full, dropping the oldest step");
+      game_prep_step_queue.pop_front();
+    }
     game_prep_step_queue.push_back(results);
   }
   break;
@@ -593,6 +757,15 @@ SlippiNetplayClient::ReadChatMessageFromPacket(sf::Packet& packet)
   if (!(packet >> s->player_idx))
   {
     ERROR_LOG_FMT(SLIPPI_ONLINE, "Chat packet too small to read player index");
+    s->error = true;
+    return std::move(s);
+  }
+  // The game uses this port as is to show who sent the message, so it has to be one of the remote
+  // players
+  if (s->player_idx == m_player_idx || PlayerIdxFromPort(s->player_idx) >= m_remote_player_count)
+  {
+    ERROR_LOG_FMT(SLIPPI_ONLINE, "Received chat message with invalid player port: {}",
+                  s->player_idx);
     s->error = true;
     return std::move(s);
   }
@@ -705,7 +878,8 @@ void SlippiNetplayClient::Send(sf::Packet& packet)
     }
 
     NetPlay::MessageID mid{((u8*)packet.getData())[0]};
-    if (mid == NetPlay::MessageID::SLIPPI_PAD || mid == NetPlay::MessageID::SLIPPI_PAD_ACK)
+    if (mid == NetPlay::MessageID::SLIPPI_PAD || mid == NetPlay::MessageID::SLIPPI_PAD_ACK ||
+        mid == NetPlay::MessageID::SLIPPI_PAD_SUGGESTION)
     {
       // Slippi communications do not need reliable connection and do not need to
       // be received in order. Channel is changed so that other reliable communications
@@ -717,6 +891,17 @@ void SlippiNetplayClient::Send(sf::Packet& packet)
     ENetPacket* epac = enet_packet_create(packet.getData(), packet.getDataSize(), flags);
     enet_peer_send(m_server[i], channel_id, epac);
   }
+}
+
+// By default ENet deliberately drops unreliable packets while round trip time is rising, and our
+// pads and acks are all unreliable. Those drops turn a latency increase into gaps in the opponent's
+// inputs, which causes stalls. Our traffic is far too small for backing off to relieve any
+// congestion. A deceleration of 0 keeps the throttle at full, and ENet also sends this setting to
+// the peer, so it stops throttling the packets it sends us too.
+static void disablePacketThrottleDrops(ENetPeer* peer)
+{
+  enet_peer_throttle_configure(peer, ENET_PEER_PACKET_THROTTLE_INTERVAL,
+                               ENET_PEER_PACKET_THROTTLE_ACCELERATION, 0);
 }
 
 void SlippiNetplayClient::Disconnect()
@@ -847,6 +1032,8 @@ void SlippiNetplayClient::ThreadFunc()
           INFO_LOG_FMT(SLIPPI_ONLINE, "[Netplay] got connect event with nil peer");
           continue;
         }
+
+        disablePacketThrottleDrops(net_event.peer);
 
         std::stringstream key_strm;
         key_strm << net_event.peer->address.host << "-" << net_event.peer->address.port;
@@ -1036,6 +1223,8 @@ void SlippiNetplayClient::ThreadFunc()
       break;
     }
 
+    bool is_waiting_on_player_drop = ProcessPlayerDrops();
+
     // If a player has been marked inactive (e.g. by ForceDisconnectPlayer on the
     // EXI thread) but their peer hasn't been torn down yet, kick the peer now so
     // the connection doesn't linger. We mark the activeConnections entry as
@@ -1061,7 +1250,9 @@ void SlippiNetplayClient::ThreadFunc()
 
     ENetEvent net_event;
     int net;
-    net = enet_host_service(m_client, &net_event, 250);
+    // The players can all be halted waiting on a dropped player, in which case no packets arrive to
+    // wake us up
+    net = enet_host_service(m_client, &net_event, is_waiting_on_player_drop ? 10 : 250);
     while (!m_async_queue.Empty())
     {
       Send(*(m_async_queue.Front().get()));
@@ -1092,15 +1283,6 @@ void SlippiNetplayClient::ThreadFunc()
 
         bool all_peers_disconnected_for_key = AreAllPeersDisconnectedForKey(key);
 
-        // If this was the last live peer for that player, publish them as inactive
-        // to the lock-free playerActive view used by the main thread.
-        if (all_peers_disconnected_for_key && m_active_connections.count(key) &&
-            m_active_connections[key].count(net_event.peer))
-        {
-          auto player_idx_for_key = m_active_connections[key][net_event.peer].player_idx;
-          player_active[player_idx_for_key].store(false, std::memory_order_release);
-        }
-
         // Check to make sure this address+port are one of the ones we are actually connected to.
         // When connecting to someone that randomizes ports, you can get one valid connection from
         // one port and a failed connection on another port. We don't want to cause a real
@@ -1114,6 +1296,16 @@ void SlippiNetplayClient::ThreadFunc()
             is_connected_client = true;
             break;
           }
+        }
+
+        // If this was the last live peer for that player, publish them as inactive
+        // to the lock-free playerActive view used by the main thread. This has to be a port
+        // we are actually connected to, losing a player makes everyone else drop them too.
+        if (is_connected_client && all_peers_disconnected_for_key &&
+            m_active_connections.count(key) && m_active_connections[key].count(net_event.peer))
+        {
+          auto player_idx_for_key = m_active_connections[key][net_event.peer].player_idx;
+          player_active[player_idx_for_key].store(false, std::memory_order_release);
         }
 
         // Capture any reason the peer encoded in the disconnect data (e.g. poor performance) so the
@@ -1144,6 +1336,8 @@ void SlippiNetplayClient::ThreadFunc()
       }
       case ENET_EVENT_TYPE_CONNECT:
       {
+        disablePacketThrottleDrops(net_event.peer);
+
         std::stringstream key_strm;
         key_strm << net_event.peer->address.host << "-" << net_event.peer->address.port;
 
@@ -1160,6 +1354,14 @@ void SlippiNetplayClient::ThreadFunc()
         ActiveConnectionInfo late_conn_info;
         late_conn_info.player_idx =
             match_info.remote_player_selections[late_conn_remote_idx].player_idx;
+        // A dropped player stays dropped, the other players have already moved on without them
+        if (m_player_drop_times_ms[late_conn_info.player_idx] != 0)
+        {
+          late_conn_info.is_disconnected = true;
+          m_active_connections[key_strm.str()][net_event.peer] = late_conn_info;
+          enet_peer_disconnect(net_event.peer, 0);
+          break;
+        }
         m_active_connections[key_strm.str()][net_event.peer] = late_conn_info;
         player_active[late_conn_info.player_idx].store(true, std::memory_order_release);
         INFO_LOG_FMT(SLIPPI_ONLINE, "New connection (late): {}", key_strm.str().c_str());
@@ -1231,7 +1433,10 @@ void SlippiNetplayClient::StartSlippiGame()
   is_desync_recovery = false;
 
   // Clear game prep queue in case anything is still lingering
-  game_prep_step_queue.clear();
+  {
+    std::lock_guard<std::mutex> lk(m_game_prep_mutex);
+    game_prep_step_queue.clear();
+  }
 
   // Reset match info for next game
   match_info.Reset();
@@ -1311,7 +1516,7 @@ void SlippiNetplayClient::SendSlippiPad(std::unique_ptr<SlippiPad> pad)
   *spac << m_local_pad_queue.front()->checksum;
 
   for (auto it = m_local_pad_queue.begin(); it != m_local_pad_queue.end(); ++it)
-    spac->append((*it)->pad_buf, SLIPPI_PAD_DATA_SIZE);  // only transfer 8 bytes per pad
+    spac->append((*it)->pad_buf, SLIPPI_PAD_WIRE_SIZE);  // only transfer what goes over the network
 
   SendAsync(std::move(spac));
   u64 time = Common::Timer::NowUs();
@@ -1331,6 +1536,19 @@ void SlippiNetplayClient::SendSlippiPad(std::unique_ptr<SlippiPad> pad)
     send_time.time_us = time;
     ack_timers[i].Push(send_time);
   }
+}
+
+// Sends the newest local input between frames so opponents can predict with it. Called from the CPU
+// thread and the adapter read thread.
+void SlippiNetplayClient::SendSlippiPadSuggestion(s32 target_frame, u32 seq, const u8* pad)
+{
+  auto spac = std::make_unique<sf::Packet>();
+  *spac << static_cast<u8>(NetPlay::MessageID::SLIPPI_PAD_SUGGESTION);
+  *spac << this->m_player_idx;
+  *spac << target_frame;
+  *spac << seq;
+  spac->append(pad, SLIPPI_PAD_INPUT_SIZE);
+  SendAsync(std::move(spac));
 }
 
 void SlippiNetplayClient::SetMatchSelections(SlippiPlayerSelections& s)
@@ -1377,6 +1595,8 @@ void SlippiNetplayClient::SendSyncedGameState(SlippiSyncedGameState& s)
 
 bool SlippiNetplayClient::GetGamePrepResults(u8 step_idx, SlippiGamePrepStepResults& res)
 {
+  std::lock_guard<std::mutex> lk(m_game_prep_mutex);
+
   // Just pull stuff off until we find something for the right step. I think that should be fine
   while (!game_prep_step_queue.empty())
   {
@@ -1396,33 +1616,36 @@ bool SlippiNetplayClient::GetGamePrepResults(u8 step_idx, SlippiGamePrepStepResu
 SlippiPlayerSelections SlippiNetplayClient::GetSlippiRemoteChatMessage(bool isChatEnabled)
 {
   SlippiPlayerSelections copied_selection = SlippiPlayerSelections();
+  bool should_reply_chat_disabled = false;
 
-  if (remote_chat_message_selection != nullptr && isChatEnabled)
   {
-    copied_selection.message_id = remote_chat_message_selection->message_id;
-    copied_selection.player_idx = remote_chat_message_selection->player_idx;
-
-    // Clear it out
-    remote_chat_message_selection->message_id = 0;
-    remote_chat_message_selection->player_idx = 0;
-  }
-  else
-  {
-    copied_selection.message_id = 0;
-    copied_selection.player_idx = 0;
-
-    // if chat is not enabled, automatically send back a message saying so.
-    if (remote_chat_message_selection != nullptr && !isChatEnabled &&
-        (remote_chat_message_selection->message_id > 0 &&
-         remote_chat_message_selection->message_id != SlippiPremadeText::CHAT_MSG_CHAT_DISABLED))
+    std::lock_guard<std::mutex> lk(m_chat_mutex);
+    if (isChatEnabled)
     {
-      auto packet = std::make_unique<sf::Packet>();
-      remote_sent_chat_message_id = SlippiPremadeText::CHAT_MSG_CHAT_DISABLED;
-      WriteChatMessageToPacket(*packet, remote_sent_chat_message_id, LocalPlayerPort());
-      SendAsync(std::move(packet));
-      remote_sent_chat_message_id = 0;
-      remote_chat_message_selection = nullptr;
+      copied_selection.message_id = m_remote_chat_message.message_id;
+      copied_selection.player_idx = m_remote_chat_message.player_idx;
+
+      // Clear it out
+      m_remote_chat_message.message_id = 0;
+      m_remote_chat_message.player_idx = 0;
     }
+    else if (m_remote_chat_message.message_id > 0 &&
+             m_remote_chat_message.message_id != SlippiPremadeText::CHAT_MSG_CHAT_DISABLED)
+    {
+      should_reply_chat_disabled = true;
+      m_remote_chat_message.message_id = 0;
+      m_remote_chat_message.player_idx = 0;
+    }
+  }
+
+  // if chat is not enabled, automatically send back a message saying so.
+  if (should_reply_chat_disabled)
+  {
+    auto packet = std::make_unique<sf::Packet>();
+    remote_sent_chat_message_id = SlippiPremadeText::CHAT_MSG_CHAT_DISABLED;
+    WriteChatMessageToPacket(*packet, remote_sent_chat_message_id, LocalPlayerPort());
+    SendAsync(std::move(packet));
+    remote_sent_chat_message_id = 0;
   }
 
   return copied_selection;
@@ -1478,6 +1701,12 @@ std::unique_ptr<SlippiRemotePadOutput> SlippiNetplayClient::GetSlippiRemotePad(i
 
   std::unique_ptr<SlippiRemotePadOutput> pad_output = std::make_unique<SlippiRemotePadOutput>();
 
+  pad_output->player_idx = index >= m_player_idx ? index + 1 : index;
+  pad_output->is_disconnected =
+      !player_active[pad_output->player_idx].load(std::memory_order_acquire);
+  pad_output->despawn_frame =
+      m_despawn_frames[pad_output->player_idx].load(std::memory_order_acquire);
+
   if (m_remote_pad_queue[index].empty())
   {
     auto empty_pad = std::make_unique<SlippiPad>(0);
@@ -1495,10 +1724,6 @@ std::unique_ptr<SlippiRemotePadOutput> SlippiNetplayClient::GetSlippiRemotePad(i
   pad_output->latest_frame = 0;
   pad_output->checksum_frame = remote_checksums[index].frame;
   pad_output->checksum = remote_checksums[index].value;
-
-  pad_output->player_idx = index >= m_player_idx ? index + 1 : index;
-  pad_output->is_disconnected =
-      !player_active[pad_output->player_idx].load(std::memory_order_acquire);
 
   // Copy inputs from the remote pad queue to the output. We iterate backwards because
   // we want to get the oldest frames possible (will have been cleared to contain the last
@@ -1600,6 +1825,12 @@ void SlippiNetplayClient::ForceDisconnect(SlippiDisconnectReason reason)
   m_pending_disconnect_reason.store(static_cast<u32>(reason), std::memory_order_release);
   m_disconnect_reason.store(static_cast<u32>(reason), std::memory_order_release);
 
+  // This has to happen before marking the players as gone. We are the one leaving here, so the
+  // network thread can't take that for those players dropping and tell the others about it. See
+  // ProcessPlayerDrops.
+  slippi_connect_status.store(SlippiConnectStatus::NET_CONNECT_STATUS_DISCONNECTED,
+                              std::memory_order_release);
+
   for (u8 i = 0; i < m_remote_player_count; i++)
   {
     ForceDisconnectPlayer(match_info.remote_player_selections[i].player_idx);
@@ -1609,6 +1840,159 @@ void SlippiNetplayClient::ForceDisconnect(SlippiDisconnectReason reason)
 SlippiNetplayClient::SlippiDisconnectReason SlippiNetplayClient::GetDisconnectReason()
 {
   return static_cast<SlippiDisconnectReason>(m_disconnect_reason.load(std::memory_order_acquire));
+}
+
+// Adds an input from a remote player. pad_mutex must be held.
+void SlippiNetplayClient::AddRemotePad(u8 p_idx, s32 frame, u8* pad_data)
+{
+  m_remote_pad_queue[p_idx].push_front(std::make_unique<SlippiPad>(frame, pad_data));
+
+  m_remote_pad_history[p_idx].emplace_front(frame, pad_data);
+  if (m_remote_pad_history[p_idx].size() > SLIPPI_DROP_REPORT_INPUT_COUNT)
+    m_remote_pad_history[p_idx].pop_back();
+}
+
+// Network-thread only. Finds the players we just lost and tells the other players which inputs we
+// have for them. Those reports add to the player's inputs, so once they've had time to arrive the
+// newest input is the one everyone should have. A report that takes longer than that can leave
+// players disagreeing, the desync detection catches that if it ends up mattering. Returns whether
+// we are still waiting on any reports.
+bool SlippiNetplayClient::ProcessPlayerDrops()
+{
+  bool is_waiting = false;
+  u64 now = Common::Timer::NowMs();
+
+  for (int i = 0; i < m_remote_player_count; i++)
+  {
+    u8 port = match_info.remote_player_selections[i].player_idx;
+    if (player_active[port].load(std::memory_order_acquire))
+      continue;
+
+    // ForceDisconnect sets the status before marking the players, so if we see a marked player this
+    // will be set when we are the one leaving. Nobody else is affected by that, so there is nothing
+    // to report.
+    if (slippi_connect_status.load(std::memory_order_acquire) ==
+        SlippiConnectStatus::NET_CONNECT_STATUS_DISCONNECTED)
+    {
+      return false;
+    }
+
+    s32 last_frame;
+    {
+      std::lock_guard<std::mutex> lk(pad_mutex);
+      last_frame = m_remote_pad_history[i].empty() ? 0 : m_remote_pad_history[i].front().frame;
+    }
+
+    if (m_player_drop_times_ms[port] == 0)
+    {
+      WARN_LOG_FMT(SLIPPI_ONLINE, "[Netplay] Lost player {}, last input frame: {}", port,
+                   last_frame);
+      m_player_drop_times_ms[port] = now;
+      SendPlayerDropReport(port);
+    }
+
+    if (m_despawn_frames[port].load(std::memory_order_acquire) != 0)
+      continue;
+
+    if (now - m_player_drop_times_ms[port] < SLIPPI_DROP_REPORT_WAIT_MS)
+    {
+      is_waiting = true;
+      continue;
+    }
+
+    WARN_LOG_FMT(SLIPPI_ONLINE,
+                 "[Netplay] Settled on player {}. Last input frame: {}, despawn frame: {}", port,
+                 last_frame, last_frame + SLIPPI_DROP_DESPAWN_FRAMES);
+    m_despawn_frames[port].store(last_frame + SLIPPI_DROP_DESPAWN_FRAMES,
+                                 std::memory_order_release);
+  }
+
+  return is_waiting;
+}
+
+// Network-thread only.
+void SlippiNetplayClient::SendPlayerDropReport(u8 port)
+{
+  sf::Packet spac;
+  spac << static_cast<u8>(NetPlay::MessageID::SLIPPI_PLAYER_DROP);
+  spac << m_player_idx;
+  spac << port;
+
+  {
+    std::lock_guard<std::mutex> lk(pad_mutex);
+    const auto& history = m_remote_pad_history[PlayerIdxFromPort(port)];
+
+    spac << (history.empty() ? static_cast<s32>(0) : history.front().frame);
+    spac << static_cast<u8>(history.size());
+    for (const auto& pad : history)
+    {
+      spac.append(pad.pad_buf, SLIPPI_PAD_WIRE_SIZE);
+    }
+  }
+
+  Send(spac);
+}
+
+// Network-thread only. Adds any inputs we were missing from a report about a dropped player, most
+// recent first. These are the real inputs, so they work the same as if the player had sent them to
+// us. The game rolls back if they differ from what it predicted.
+void SlippiNetplayClient::AddPlayerDropReportInputs(u8 p_idx, s32 last_frame, u8 input_count,
+                                                    const u8* inputs)
+{
+  std::lock_guard<std::mutex> lk(pad_mutex);
+
+  s32 head_frame = m_remote_pad_queue[p_idx].empty() ? 0 : m_remote_pad_queue[p_idx].front()->frame;
+  s64 missing_count = static_cast<s64>(last_frame) - static_cast<s64>(head_frame);
+  if (missing_count > 128)
+  {
+    ERROR_LOG_FMT(SLIPPI_ONLINE, "Player drop packet contained too many frames: {}", missing_count);
+    return;
+  }
+
+  for (s64 i = missing_count - 1; i >= 0; i--)
+  {
+    u8 pad[SLIPPI_PAD_WIRE_SIZE] = {};
+    if (i < input_count)
+    {
+      std::copy_n(&inputs[i * SLIPPI_PAD_WIRE_SIZE], SLIPPI_PAD_WIRE_SIZE, pad);
+    }
+    else
+    {
+      // SLIPPI_DROP_REPORT_INPUT_COUNT should prevent this. The queue can't have gaps, so repeat an
+      // input. If it differs from the real one the desync detection catches it.
+      ERROR_LOG_FMT(SLIPPI_ONLINE, "Player drop packet is missing frame {}",
+                    static_cast<s64>(last_frame) - i);
+      if (!m_remote_pad_queue[p_idx].empty())
+        std::copy_n(m_remote_pad_queue[p_idx].front()->pad_buf, SLIPPI_PAD_WIRE_SIZE, pad);
+    }
+
+    AddRemotePad(p_idx, static_cast<s32>(static_cast<s64>(last_frame) - i), pad);
+  }
+}
+
+// Once we settle on a dropped player's last input it repeats. These go in the same queue as real
+// inputs since they are just as final, which means the game doesn't need to know the player is
+// gone.
+void SlippiNetplayClient::FillDroppedPlayerInputs(s32 frame)
+{
+  std::lock_guard<std::mutex> lk(pad_mutex);
+
+  for (int i = 0; i < m_remote_player_count; i++)
+  {
+    u8 port = match_info.remote_player_selections[i].player_idx;
+    if (m_despawn_frames[port].load(std::memory_order_acquire) == 0)
+      continue;
+
+    auto& queue = m_remote_pad_queue[i];
+    if (queue.empty())
+      queue.push_front(std::make_unique<SlippiPad>(0));
+
+    while (queue.front()->frame < frame)
+    {
+      queue.push_front(
+          std::make_unique<SlippiPad>(queue.front()->frame + 1, queue.front()->pad_buf));
+    }
+  }
 }
 
 // Network-thread only (called from ThreadFunc disconnect handler).
@@ -1644,20 +2028,10 @@ SlippiMatchInfo* SlippiNetplayClient::GetMatchInfo()
   return &match_info;
 }
 
-// Drains the ping accumulator and returns the average ping (in ms) across all measurements taken
-// since the last call. Returns 0 if there were no measurements (e.g. a full stall), which callers
-// should treat as "no signal" rather than a great connection — the speed ratio check covers that
-// case. The two exchanges aren't atomic as a pair, so a sample landing between them can be
-// attributed to the wrong interval; at one sample per frame that skews an interval average by a
-// negligible amount and is not worth a lock.
-double SlippiNetplayClient::GetAndResetAvgPingMs()
+// The most recent ping measurement in microseconds, or 0 if there hasn't been one yet
+u64 SlippiNetplayClient::GetPingUs(int index)
 {
-  u64 sum_us = ping_sample_sum_us.exchange(0, std::memory_order_relaxed);
-  u64 count = ping_sample_count.exchange(0, std::memory_order_relaxed);
-  if (count == 0)
-    return 0.0;
-
-  return static_cast<double>(sum_us) / static_cast<double>(count) / 1000.0;
+  return ping_us[index].load(std::memory_order_relaxed);
 }
 
 // return the smallest time offset among all remote players
