@@ -151,7 +151,7 @@ private:
       {CMD_GET_GECKO_CODES, 0},
 
       // The following are used for Slippi online and also have fixed sizes
-      {CMD_ONLINE_INPUTS, 25},
+      {CMD_ONLINE_INPUTS, 27},
       {CMD_CAPTURE_SAVESTATE, 32},
       {CMD_LOAD_SAVESTATE, 32},
       {CMD_GET_MATCH_STATE, 0},
@@ -231,7 +231,10 @@ private:
   u16 getRandomStage();
   bool isDisconnected();
   void handleOnlineInputs(u8* payload);
-  void prepareOpponentInputs(s32 frame, bool should_skip);
+  bool prepareOpponentInputs(s32 frame, bool should_skip);
+  void startInputSuggestions(u8 delay, u8 input_source_port);
+  void reportInputSuggestionsFrame(s32 frame, bool is_skip, bool is_advancing, u8 input_source_port,
+                                   u8* inputs);
   void handleSendInputs(s32 frame, u8 delay, s32 checksum_frame, u32 checksum, u8* inputs);
   void handleCaptureSavestate(u8* payload);
   void handleLoadSavestate(u8* payload);
@@ -239,8 +242,16 @@ private:
   void startFindMatch(u8* payload);
   void prepareOnlineMatchState();
   void setMatchSelections(u8* payload);
-  bool shouldSkipOnlineFrame(s32 frame, s32 finalized_frame);
-  void handlePoorMatchPerformance(s32 frame);
+
+  // Why a frame is being held back instead of sent
+  enum class OnlineFrameSkip
+  {
+    NONE,
+    STALL,      // The opponent's inputs are past the rollback limit
+    TIME_SYNC,  // We are running ahead of the opponent
+  };
+  OnlineFrameSkip shouldSkipOnlineFrame(s32 frame, s32 finalized_frame);
+  void handleMatchQuality(s32 frame, bool is_stall);
   bool shouldAdvanceOnlineFrame(s32 frame);
   bool opponentRunahead();
   void handleLogInRequest();
@@ -292,9 +303,6 @@ private:
   std::vector<u8> gecko_list;
 
   u32 stall_frame_counts[SLIPPI_REMOTE_PLAYER_MAX] = {};
-  u64 last_interval_time_us = 0;
-  // Leaky accumulator of poor-performance intervals (see handlePoorMatchPerformance)
-  s32 perf_debt = 0;
 
   std::vector<u8> m_read_queue;
   std::unique_ptr<Slippi::SlippiGame> m_current_game = nullptr;
